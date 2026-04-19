@@ -28,7 +28,21 @@ scikit-learn>=1.3.0,<2.0.0
 supabase>=2.0.0,<3.0.0
 
 # HTTP
-requests>=2.31.0,<3.0.0
+requests>=2.33.0,<3.0.0  # CVE-2026-25645
+
+# Security-pinned transitives (2026-04-19 pip-audit 대응)
+pyjwt>=2.12.0                # CVE-2026-32597
+cryptography>=46.0.7         # CVE-2026-34073, 39892
+authlib>=1.6.11              # GHSA-jj8c-mmj3-mmgv
+nltk>=3.9.4                  # CVE-2026-33230
+pillow>=12.2.0               # CVE-2026-40192
+# urllib3 2.x는 alpaca-trade-api 3.0 의존성 충돌(<2 요구) — 1.x 유지.
+# CVE-2025-50181/66418/66471/2026-21441은 알려진 거래소 API(Upbit/Kiwoom/Alpaca/yfinance)만
+# 호출하므로 untrusted streaming 리스크 낮음. alpaca-trade-api → alpaca-py 마이그레이션 후 업 예정.
+urllib3>=1.26.20,<2
+pygments>=2.20.0             # CVE-2026-4539
+pyasn1>=0.6.3                # CVE-2026-30922
+curl-cffi>=0.15.0            # CVE-2026-33752
 
 # Realtime and alternative data (Phase 9)
 # websockets: alpaca-trade-api requires <11, pyupbit also depends on it → transitive dep로 해결
