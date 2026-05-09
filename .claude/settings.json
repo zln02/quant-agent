@@ -1,0 +1,48 @@
+{
+    "permissions": {
+        "deny": [
+            "Edit(./.env)",
+            "Edit(./.env.*)",
+            "Bash(./scripts/*place_order*)",
+            "Bash(./scripts/*withdraw*)",
+            "Bash(./scripts/*execute_trade*)",
+            "Bash(crontab -r*)",
+            "Bash(crontab -e*)"
+        ],
+        "ask": [
+            "Edit(btc/**)",
+            "Write(btc/**)",
+            "MultiEdit(btc/**)",
+            "Edit(quant/**)",
+            "Write(quant/**)",
+            "MultiEdit(quant/**)",
+            "Edit(execution/**)",
+            "Write(execution/**)",
+            "MultiEdit(execution/**)",
+            "Edit(agents/**)",
+            "Write(agents/**)",
+            "MultiEdit(agents/**)",
+            "Edit(stocks/**)",
+            "Write(stocks/**)",
+            "MultiEdit(stocks/**)"
+        ],
+        "allow": [
+            "Bash(flake8:*)",
+            "Bash(python -m pytest:*)",
+            "Bash(python3 -m pytest:*)"
+        ]
+    },
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/trading_guard.py"
+                    }
+                ]
+            }
+        ]
+    }
+}
