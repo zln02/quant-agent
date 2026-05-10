@@ -7,7 +7,6 @@ import { PortfolioProvider } from "./context/PortfolioContext";
 const BtcPage = lazy(() => import("./pages/BtcPage"));
 const KrStockPage = lazy(() => import("./pages/KrStockPage"));
 const UsStockPage = lazy(() => import("./pages/UsStockPage"));
-const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const ProPage = lazy(() => import("./pages/ProPage"));
 
 function RouteSkeleton() {
@@ -47,14 +46,6 @@ export default function App() {
                 element={
                   <Suspense fallback={<RouteSkeleton />}>
                     <UsStockPage />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/agents"
-                element={
-                  <Suspense fallback={<RouteSkeleton />}>
-                    <AgentsPage />
                   </Suspense>
                 }
               />

@@ -79,10 +79,7 @@ def get_help_text() -> str:
         "/market - 시장 현황 요약\n"
         "/review - 최근 성과 요약\n"
         "/ask <질문> - AI에게 직접 질문\n"
-        "/why - 최근 의사결정 근거\n"
         "/risk - 현재 리스크 상태 요약\n"
-        "/agents - 최근 에이전트 의사결정 요약\n"
-        "/performance - 이번 주 에이전트 성능 요약\n"
         "/help - 도움말\n"
         "\n"
         "자유 텍스트도 바로 질문할 수 있습니다."
@@ -339,38 +336,6 @@ def get_btc_state() -> dict:
     return _load_json(WORKSPACE / "brain" / "market" / "last_btc_state.json")
 
 
-def get_recent_agent_decisions(limit: int = 5) -> list[dict]:
-    if not supabase:
-        return []
-    try:
-        rows = (
-            supabase.table("agent_decisions")
-            .select("created_at, agent_name, market, action, confidence, reasoning")
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return rows.data or []
-    except Exception:
-        return []
-
-
-def get_weekly_performance_rows(limit: int = 5) -> list[dict]:
-    if not supabase:
-        return []
-    try:
-        rows = (
-            supabase.table("agent_performance")
-            .select("*")
-            .order("period_end", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return rows.data or []
-    except Exception:
-        return []
-
-
 def get_recent_trades(limit: int = 5) -> list[dict]:
     if not supabase:
         return []
@@ -388,28 +353,12 @@ def get_recent_trades(limit: int = 5) -> list[dict]:
         return []
 
 
-def format_decisions(rows: list[dict]) -> str:
-    if not rows:
-        return "기록 없음"
-    lines = []
-    for row in rows[:5]:
-        action = str(row.get("action") or "HOLD").upper()
-        confidence = row.get("confidence")
-        confidence_text = (
-            f"{float(confidence):.2f}" if isinstance(confidence, (int, float)) else "—"
-        )
-        lines.append(
-            f"- {row.get('agent_name', 'agent')} {action} ({confidence_text})"
-        )
-    return "\n".join(lines)
-
-
 def format_trades(rows: list[dict]) -> str:
     if not rows:
         return "기록 없음"
     lines = []
     for row in rows[:5]:
-        # trade_executions 스키마 기준: trade_type (BUY/SELL). action 컬럼은 agent_decisions 전용.
+        # trade_executions 스키마 기준: trade_type (BUY/SELL).
         action = str(row.get("trade_type") or "HOLD").upper()
         lines.append(
             f"- {row.get('stock_name') or row.get('stock_code') or '-'} "
@@ -445,57 +394,10 @@ def get_risk_summary_text() -> str:
         return f"리스크 요약 조회 실패: {e}"
 
 
-def get_agent_summary_text() -> str:
-    rows = get_recent_agent_decisions(5)
-    if not rows:
-        return "최근 에이전트 의사결정 기록이 없습니다."
-    lines = ["🤖 최근 에이전트 판단"]
-    for row in rows:
-        lines.append(
-            f"- {row.get('market', 'btc').upper()} {row.get('agent_name', 'agent')}: "
-            f"{str(row.get('action') or 'HOLD').upper()} · {row.get('reasoning') or '근거 없음'}"
-        )
-    return "\n".join(lines)[:500]
-
-
-def get_last_decision_reason_text() -> str:
-    rows = get_recent_agent_decisions(1)
-    if not rows:
-        return "최근 의사결정 기록이 없습니다."
-    row = rows[0]
-    confidence = row.get("confidence")
-    confidence_text = (
-        f"{float(confidence):.2f}" if isinstance(confidence, (int, float)) else "—"
-    )
-    return (
-        "🧠 최근 의사결정 근거\n"
-        f"- 시장: {str(row.get('market') or 'btc').upper()}\n"
-        f"- 에이전트: {row.get('agent_name') or 'agent'}\n"
-        f"- 액션: {str(row.get('action') or 'HOLD').upper()}\n"
-        f"- 신뢰도: {confidence_text}\n"
-        f"- 근거: {row.get('reasoning') or '근거 없음'}"
-    )[:500]
-
-
-def get_weekly_performance_text() -> str:
-    rows = get_weekly_performance_rows(5)
-    if not rows:
-        return "이번 주 에이전트 성능 데이터가 없습니다."
-    lines = ["📈 이번 주 에이전트 성능"]
-    for row in rows:
-        accuracy = float(row.get("accuracy") or 0) * 100
-        lines.append(
-            f"- {row.get('agent_name', 'agent')} {row.get('market', 'all').upper()}: "
-            f"정확도 {accuracy:.1f}% · 신호 {int(row.get('total_signals') or 0)}건"
-        )
-    return "\n".join(lines)[:500]
-
-
 def build_system_context() -> str:
     btc = get_btc_state()
     status_text = get_status_text().replace("<b>", "").replace("</b>", "")
     recent_trades = get_recent_trades(5)
-    decisions = get_recent_agent_decisions(5)
     return (
         "[실시간 시스템 컨텍스트]\n"
         f"BTC 가격: {btc.get('price') or btc.get('btc_price') or 'N/A'}\n"
@@ -504,9 +406,7 @@ def build_system_context() -> str:
         "[계좌 상태]\n"
         f"{status_text}\n\n"
         "[최근 거래]\n"
-        f"{format_trades(recent_trades)}\n\n"
-        "[최근 에이전트 판단]\n"
-        f"{format_decisions(decisions)}"
+        f"{format_trades(recent_trades)}"
     )
 
 
@@ -561,8 +461,6 @@ def handle_command(cmd: str, chat_id: str):
         handle_sell_all_confirm(chat_id)
     elif lower.startswith("/cancel_sell_all"):
         send_message("전량 매도가 취소되었습니다.", chat_id, reply_markup=build_keyboard())
-    elif lower.startswith("/why"):
-        send_message(get_last_decision_reason_text(), chat_id, reply_markup=build_keyboard(), html_mode=False)
     elif lower.startswith("/risk"):
         send_message(get_risk_summary_text(), chat_id, reply_markup=build_keyboard(), html_mode=False)
     elif lower.startswith("/drawdown"):
@@ -577,10 +475,6 @@ def handle_command(cmd: str, chat_id: str):
         except Exception as e:
             log.error(f"/daily_loss 실패: {e}", exc_info=True)
             send_message("오늘 손익 조회 실패", chat_id, reply_markup=build_keyboard(), html_mode=False)
-    elif lower.startswith("/agents"):
-        send_message(get_agent_summary_text(), chat_id, reply_markup=build_keyboard(), html_mode=False)
-    elif lower.startswith("/performance"):
-        send_message(get_weekly_performance_text(), chat_id, reply_markup=build_keyboard(), html_mode=False)
     elif lower.startswith("/ask "):
         question = cmd[5:].strip()
         if not question:

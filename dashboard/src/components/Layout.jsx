@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, Bitcoin, Bot, Globe2, Landmark, Layers, Menu, Settings2, X } from "lucide-react";
+import { Activity, Bitcoin, Globe2, Landmark, Layers, Menu, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation, useOutlet } from "react-router-dom";
 import {
@@ -15,7 +15,6 @@ const NAV = [
   { to: "/",       label: "BTC",        sub: "비트코인",   accent: "var(--accent-btc)",    icon: Bitcoin  },
   { to: "/kr",     label: "국내 주식",   sub: "KR Market",  accent: "var(--accent-kr)",     icon: Landmark },
   { to: "/us",     label: "미국 주식",   sub: "US Market",  accent: "var(--accent-us)",     icon: Globe2   },
-  { to: "/agents", label: "AI 에이전트", sub: "Agents",     accent: "var(--accent-agents)", icon: Bot      },
   { to: "/pro",    label: "Pro",        sub: "도킹 워크스페이스", accent: "var(--accent-btc)", icon: Layers   },
 ];
 

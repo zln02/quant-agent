@@ -5,7 +5,6 @@ import { useCallback, useRef } from "react";
 
 import { ProDataProvider } from "./pro/ProDataContext";
 import { load, save } from "./pro/proLayoutPersist";
-import AgentsPanel from "./pro/panels/AgentsPanel";
 import ChartPanel from "./pro/panels/ChartPanel";
 import ScorePortfolioPanel from "./pro/panels/ScorePortfolioPanel";
 import TradesPanel from "./pro/panels/TradesPanel";
@@ -14,7 +13,6 @@ const components = {
   chart: ChartPanel,
   score: ScorePortfolioPanel,
   trades: TradesPanel,
-  agents: AgentsPanel,
 };
 
 function buildDefaultLayout(api) {
@@ -30,12 +28,6 @@ function buildDefaultLayout(api) {
     component: "trades",
     title: "체결",
     position: { referencePanel: "chart", direction: "below" },
-  });
-  api.addPanel({
-    id: "agents",
-    component: "agents",
-    title: "AI 신호",
-    position: { referencePanel: "score", direction: "below" },
   });
 }
 

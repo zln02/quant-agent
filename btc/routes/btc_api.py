@@ -1,19 +1,24 @@
 """BTC-related API endpoints."""
-import os, time, json, requests, asyncio, math
-from datetime import datetime, timezone, timedelta
+import asyncio
+import json
+import math
+import os
+import sys as _sys
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import psutil
+import requests
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
-import psutil
 
-import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from common.supabase_client import get_supabase
-from common.config import (
-    BTC_LOG, BRAIN_PATH, MEMORY_PATH,
-    UPBIT_BALANCE_CACHE_TTL, BTC_NEWS_CACHE_TTL, BTC_FX_CACHE_TTL,
-)
+from common.config import (BRAIN_PATH, BTC_FX_CACHE_TTL, BTC_LOG,
+                           BTC_NEWS_CACHE_TTL, MEMORY_PATH,
+                           UPBIT_BALANCE_CACHE_TTL)
 from common.logger import get_logger
+from common.supabase_client import get_supabase
 
 log = get_logger("btc_api")
 
@@ -101,7 +106,7 @@ def _get_fx_rate():
             return _fx_cache["rate"]
     except Exception:
         pass
-    
+
     try:
         # Fallback: Get rate from exchange API
         r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
@@ -112,7 +117,7 @@ def _get_fx_rate():
             return _fx_cache["rate"]
     except Exception:
         pass
-    
+
     return _fx_cache["rate"]  # Return cached or default (1300)
 
 
@@ -322,7 +327,7 @@ async def api_btc_portfolio():
             # Compute default stop_loss and take_profit if not set
             sl = p.get("stop_loss") or (entry_price * 0.97)  # 3% stop loss
             tp = p.get("take_profit") or (entry_price * 1.12)  # 12% take profit
-            
+
             open_positions.append({
                 "id": p.get("id"),
                 "entry_price": entry_price,
@@ -578,20 +583,20 @@ async def get_trades(
         return []
     try:
         query = supabase.table("btc_trades").select("*")
-        
+
         # 액션 필터링
         if action:
             query = query.eq("action", action)
-        
+
         # 시간 필터링
         if hours:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
             query = query.gte("timestamp", cutoff)
-        
+
         # 정렬 및 제한
         res = query.order("timestamp", desc=True).limit(limit).execute()
         data = res.data or []
-        
+
         for t in data:
             if t.get("timestamp"):
                 t["timestamp"] = t["timestamp"][:19]
@@ -829,59 +834,6 @@ async def get_brain():
         return {"error": "Internal server error"}
 
 
-@router.get("/api/agents/decisions")
-@router.get("/api/agent-decisions")
-async def get_agent_decisions(
-    limit: int = 20,
-    market: str | None = Query(default=None),
-    agent: str | None = Query(default=None),
-    action: str | None = Query(default=None),
-):
-    """최근 에이전트 팀 결정 이력 반환."""
-    try:
-        query = supabase.table("agent_decisions").select("*")
-        if market and market.lower() != "all":
-            query = query.eq("market", market.lower())
-        if agent and agent.lower() != "all":
-            query = query.eq("agent_name", agent)
-        if action and action.lower() != "all":
-            query = query.eq("action", action.upper())
-        rows = query.order("created_at", desc=True).limit(limit).execute()
-        return {"decisions": rows.data or []}
-    except Exception as e:
-        log.error(f"agent_decisions 조회 실패: {e}", exc_info=True)
-        return {"decisions": [], "error": "Internal server error"}
-
-
-@router.get("/api/decisions/{market}")
-async def get_decisions_by_market(market: str, limit: int = 20):
-    """특정 마켓(btc/kr/us)의 에이전트 결정 이력 반환."""
-    try:
-        data = (
-            supabase.table("agent_decisions")
-            .select("*")
-            .eq("market", market.lower())
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        return {"decisions": data.data or []}
-    except Exception as e:
-        log.error(f"decisions/{market} 조회 실패: {e}", exc_info=True)
-        return {"decisions": [], "error": "Internal server error"}
-
-
-@router.get("/api/agent-performance")
-async def get_agent_performance(period: str = Query(default="weekly")):
-    try:
-        from agents.agent_performance import AgentPerformanceTracker
-
-        return await AgentPerformanceTracker.fetch_summary(period=period)
-    except Exception as e:
-        log.error(f"agent_performance 조회 실패: {e}", exc_info=True)
-        return {"items": [], "period": period, "error": "Internal server error"}
-
-
 @router.get("/api/risk-metrics")
 async def get_risk_metrics():
     try:
@@ -911,35 +863,8 @@ async def get_risk_metrics():
 
 @router.get("/api/btc/decision-log")
 async def get_decision_log(limit: int = 20):
-    """BTC 매매 판단 로그 (AI reason + 지표 스냅샷)."""
+    """BTC 매매 판단 로그 (지표 스냅샷)."""
     try:
-        if supabase:
-            try:
-                rows = (
-                    supabase.table("agent_decisions")
-                    .select("created_at, action, confidence, reasoning, agent_name, context")
-                    .eq("market", "btc")
-                    .order("created_at", desc=True)
-                    .limit(limit)
-                    .execute()
-                )
-                if rows.data:
-                    return {
-                        "decisions": [
-                            {
-                                "created_at": row.get("created_at"),
-                                "action": row.get("action"),
-                                "confidence": row.get("confidence"),
-                                "reason": row.get("reasoning"),
-                                "agent_name": row.get("agent_name"),
-                                "context": row.get("context"),
-                            }
-                            for row in rows.data
-                        ]
-                    }
-            except Exception:
-                pass
-
         rows = (
             supabase.table("btc_trades")
             .select("*")
