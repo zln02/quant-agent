@@ -5,23 +5,17 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
-    "StrategyReviewer",
-    "NewsAnalyst",
     "RegimeClassifier",
     "AlertManager",
     "DailyReportGenerator",
     "WeeklyReportGenerator",
-    "TradingAgentTeam",
 ]
 
 _MODULE_BY_EXPORT = {
-    "StrategyReviewer": "agents.strategy_reviewer",
-    "NewsAnalyst": "agents.news_analyst",
     "RegimeClassifier": "agents.regime_classifier",
     "AlertManager": "agents.alert_manager",
     "DailyReportGenerator": "agents.daily_report",
     "WeeklyReportGenerator": "agents.weekly_report",
-    "TradingAgentTeam": "agents.trading_agent_team",
 }
 
 
