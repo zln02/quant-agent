@@ -17,14 +17,6 @@ Postgres 17. 2026-04-19 기준. quant-agent 관련 23개 테이블 범위 (`jay_
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      AGENT DECISIONS                             │
-│   [agent_decisions] ← agents/*.py                                │
-│         ↑                                                        │
-│         └── signal_source 참조 (rule/ml/llm/composite)          │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
 │                    TRADE EXECUTIONS                              │
 │   [btc_trades]   [trade_executions (KR)]   [us_trade_executions] │
 │                              ↓                                   │
@@ -41,7 +33,7 @@ Postgres 17. 2026-04-19 기준. quant-agent 관련 23개 테이블 범위 (`jay_
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   ANALYTICS / OBSERVABILITY                      │
-│   [agent_performance]   [signal_ic_history]   [health_snapshots] │
+│   [signal_ic_history]   [health_snapshots]                       │
 │   [daily_reports]   [data_collection_log]                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
