@@ -5,18 +5,14 @@ import argparse
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
-from common.config import BRAIN_PATH
 from common.env_loader import load_env
 from common.logger import get_logger
 from common.telegram import send_telegram
 
 load_env()
 log = get_logger("weekly_report")
-
-STRATEGY_HISTORY_DIR = BRAIN_PATH / "strategy-history"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -36,13 +32,9 @@ class WeeklyReportContext:
     factor_summary: str
     regime_change: str
     next_week_plan: str
-    strategy_reviewer_summary: str
 
 
 class WeeklyReportGenerator:
-    def __init__(self, strategy_history_dir: Path = STRATEGY_HISTORY_DIR):
-        self.strategy_history_dir = Path(strategy_history_dir)
-
     def is_send_day(self, as_of: Optional[date | datetime | str] = None) -> bool:
         if as_of is None:
             d = date.today()
@@ -54,26 +46,6 @@ class WeeklyReportGenerator:
             d = datetime.strptime(str(as_of)[:10], "%Y-%m-%d").date()
         return d.weekday() == 6
 
-    def load_latest_strategy_review_summary(self) -> str:
-        if not self.strategy_history_dir.exists():
-            return "No strategy reviewer history found."
-
-        files = sorted(self.strategy_history_dir.glob("*.json"))
-        if not files:
-            return "No strategy reviewer history found."
-
-        latest = files[-1]
-        try:
-            payload = json.loads(latest.read_text(encoding="utf-8"))
-            next_strategy = payload.get("next_strategy") or {}
-            summary = str(next_strategy.get("summary") or "")
-            if summary:
-                return summary
-            return "Strategy review present but summary is empty."
-        except Exception as exc:
-            log.warning("failed to load strategy review summary", error=exc)
-            return "Failed to read strategy reviewer result."
-
     def build_markdown(self, ctx: WeeklyReportContext, week_label: Optional[str] = None) -> str:
         label = week_label or datetime.now(timezone.utc).strftime("%Y-W%W")
         return (
@@ -82,8 +54,6 @@ class WeeklyReportGenerator:
             f"- **Trades**: {ctx.trade_count}\n"
             f"- **Factor Contribution**: {ctx.factor_summary}\n"
             f"- **Regime Change**: {ctx.regime_change}\n\n"
-            f"### Strategy Reviewer\n"
-            f"{ctx.strategy_reviewer_summary}\n\n"
             f"### Next Week Plan\n"
             f"{ctx.next_week_plan}\n"
         )
@@ -96,7 +66,6 @@ class WeeklyReportGenerator:
             factor_summary="No major positive or negative factor tilt.",
             regime_change="Stable",
             next_week_plan="Keep diversified exposures and enforce VaR limits.",
-            strategy_reviewer_summary=self.load_latest_strategy_review_summary(),
         )
 
     def run(self, send: bool = True) -> dict:
