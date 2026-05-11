@@ -85,7 +85,6 @@ python btc/btc_dashboard.py  # Dashboard at :8080
 ├── execution/        # 주문 실행 (SmartRouter, TWAP, VWAP)
 ├── common/           # 공통 인프라 (config, logger, Supabase, retry)
 ├── dashboard/        # React + Vite 프론트엔드
-├── company/          # AI 소프트웨어 회사 (CEO→전문가 위임)
 ├── secretary/        # 자율 리서치 + Notion 통합
 ├── tests/            # pytest 테스트 스위트
 ├── scripts/          # 크론 래퍼 + 유틸
