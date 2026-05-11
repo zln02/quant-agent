@@ -1107,9 +1107,21 @@ def get_trading_signal(
     """
     매매 신호 결정 (우선순위):
     1. ML 모델 (XGBoost) — 고확률 직접 BUY
-    2. AI (GPT) or 룰 기반 → ML 블렌딩 (0.5/0.5)
+    2. AI (GPT) or 룰 기반 → ML 블렌딩 (rule 60% / ML 40%)
     3. 룰 기반 — AI도 실패 시
     반환 dict에 'ml_score', 'ml_confidence' 항상 포함
+
+    신호 결정 분기 4가지:
+    1. ml_model import 실패 → rule_based 단독 (콜드스타트 극단)
+    2. ml_model OK + ensemble_meta.json 부재 → AI 단독 (운영 콜드스타트)
+       - 현재 prod 상태: trade_executions < 50건, 매일 retrain 미트리거
+       - 실거래 시작 후 50건 도달 시 자동 해제
+    3. ML active + 강신호 (action ∈ {BUY/STRONG_BUY/SWING_BUY}, conf ≥ 78)
+       → ML 단독 BUY (블렌딩 안 함)
+    4. ML active + 약신호 (HOLD 등 또는 conf < 78)
+       → rule/AI + ML 60/40 블렌딩 (실제 가중치는 common/config.py ML_BLEND_CONFIG)
+
+    테스트: tests/test_stock_signal.py 4개 분기 명시 커버.
     """
     ml_confidence: float = 0.0
     ml_source: str = 'ML_NA'
@@ -1161,7 +1173,7 @@ def get_trading_signal(
         dart = _get_dart_score(stock['code'])
         base_signal = rule_based_signal(indicators, kospi, weekly, has_position, supply, momentum, dart)
 
-    # ML 블렌딩: BUY 신호일 때만 confidence 조정 (rule 0.5 / ml 0.5)
+    # ML 블렌딩: BUY 신호일 때만 confidence 조정 (60/40 — ML_BLEND_CONFIG 참조)
     if base_signal.get('action') == 'BUY' and ml_confidence > 0:
         base_conf = float(base_signal.get('confidence', 0))
         blended = round(

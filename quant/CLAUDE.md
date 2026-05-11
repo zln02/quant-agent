@@ -10,6 +10,8 @@
 평일   08:30  stocks/ml_model.py retrain (체결 50건 이상 시)
 ```
 
+> ⚠️ **현재 콜드스타트 상태** — `trade_executions=38` (2026-05) < 50. KR 실거래 시작 후 50건 도달 시 ML 자동 활성화. 콜드스타트 동작은 `tests/test_stock_signal.py` 4개 분기 테스트 참조.
+
 ## 파일 구조
 ```
 quant/

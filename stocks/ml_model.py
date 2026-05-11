@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-주식 매매 ML 모델 v1.0
+주식 매매 ML 모델 v1.0 — KR 종목 ML 신호 모듈
 
-XGBoost 분류 모델:
+XGBoost 분류 모델 (룰/AI 보조용 60/40 블렌딩 컴포넌트):
 - 입력: 기술적 지표 + 가격/거래량 특성
 - 출력: 3일 내 +2% 이상 상승 확률
 
@@ -11,15 +11,23 @@ XGBoost 분류 모델:
     python3 stocks/ml_model.py evaluate       # 성과 평가(=train)
     python3 stocks/ml_model.py predict 005930 # 특정 종목 예측
     python3 stocks/ml_model.py predict_all    # 전체 종목 예측
+
+콜드스타트 정책:
+- 학습 트리거: 평일 08:30 retrain (trade_executions ≥ 50건일 때)
+- 50건 미달 시: ensemble_meta.json 미생성 → 호출자가 ML 가드 차단 → AI/rule 단독 동작
+- get_ml_signal() 자체는 항상 호출 가능하지만 호출자가 MODEL_DIR/ensemble_meta.json
+  존재 여부로 결과 채택 여부 결정 (stock_trading_agent.py:1121).
+
+설계 근거: quant/CLAUDE.md '주간 자동화 루프' 섹션 참조.
 """
 
-import os
 import json
+import os
 import sys
-import joblib
 from datetime import datetime, timezone
 from pathlib import Path
 
+import joblib
 import numpy as np
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
@@ -820,9 +828,9 @@ def walk_forward_validate(X: np.ndarray, y: np.ndarray, n_splits: int = 5) -> di
         }
     """
     try:
-        from xgboost import XGBClassifier
+        from sklearn.metrics import precision_score, roc_auc_score
         from sklearn.model_selection import TimeSeriesSplit
-        from sklearn.metrics import roc_auc_score, precision_score
+        from xgboost import XGBClassifier
     except ImportError as e:
         log.warning(f'의존성 부족: {e}')
         return {}
@@ -923,8 +931,8 @@ def _optuna_hpo(X_train: np.ndarray, y_train: np.ndarray, n_trials: int = 40) ->
     """
     try:
         import optuna
-        from sklearn.model_selection import TimeSeriesSplit
         from sklearn.metrics import roc_auc_score
+        from sklearn.model_selection import TimeSeriesSplit
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     except ImportError as e:
         log.warning(f'optuna 미설치: {e}')
@@ -1064,10 +1072,8 @@ def _rfecv_select_features(X: np.ndarray, y: np.ndarray) -> list[int]:
 def train_model(horizon_key: str = '3d'):
     """앙상블 스태킹 학습. LightGBM/CatBoost 없으면 XGBoost 폴백."""
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (
-        classification_report, accuracy_score,
-        roc_auc_score, average_precision_score,
-    )
+    from sklearn.metrics import (accuracy_score, average_precision_score,
+                                 classification_report, roc_auc_score)
     from sklearn.model_selection import TimeSeriesSplit
 
     cfg = HORIZON_CONFIGS[horizon_key]
