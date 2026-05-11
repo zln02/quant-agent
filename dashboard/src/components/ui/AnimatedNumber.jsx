@@ -35,7 +35,7 @@ export default function AnimatedNumber({
   }, [value]);
 
   return (
-    <span className={className}>
+    <span className={`num-tabular ${className}`.trim()}>
       {`${prefix}${Number(displayValue).toLocaleString(undefined, {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals,

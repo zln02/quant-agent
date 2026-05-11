@@ -1,4 +1,5 @@
-/* Google Fonts moved to index.html <link> tags (non-render-blocking) */
+/* Pretendard self-hosted (npm); JetBrains Mono kept via <link> in index.html */
+@import "./styles/fonts.css";
 @import "./styles/tokens.css";
 
 @tailwind base;
@@ -26,7 +27,7 @@
       radial-gradient(circle at 50% 0%, rgba(0, 212, 170, 0.06), transparent 18%),
       var(--bg-primary);
     color: var(--text-primary);
-    font-family: "Inter", system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -65,8 +66,16 @@
 @layer utilities {
   .mono,
   .numeric {
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Tabular-nums for proportional (Pretendard) numbers — apply when columns
+     of numbers need to line up but you do NOT want the monospace face.
+     Use on dashboards/counters/AnimatedNumber etc. */
+  .num-tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
   }
 
   .terminal-table {
