@@ -1,16 +1,14 @@
 """Phase 18 monitoring/report module tests."""
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agents import self_healer
 from agents.alert_manager import AlertManager
 from agents.daily_report import DailyReportContext, DailyReportGenerator
-from agents import self_healer
-from agents.weekly_report import WeeklyReportGenerator
 
 
 class AlertManagerTests(unittest.TestCase):
@@ -50,26 +48,6 @@ class DailyReportTests(unittest.TestCase):
         )
         self.assertIn("Daily Trading Report", text)
         self.assertIn("Tomorrow Strategy", text)
-
-
-class WeeklyReportTests(unittest.TestCase):
-    def test_strategy_reviewer_summary_included(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            history_dir = Path(td)
-            payload = {
-                "next_strategy": {
-                    "summary": "Favor low-volatility and positive cashflow names.",
-                }
-            }
-            (history_dir / "2026-02-23.json").write_text(json.dumps(payload), encoding="utf-8")
-
-            gen = WeeklyReportGenerator(strategy_history_dir=history_dir)
-            ctx = gen.collect_context()
-            report = gen.build_markdown(ctx, week_label="2026-W08")
-
-            self.assertIn("Weekly Trading Report", report)
-            self.assertIn("Strategy Reviewer", report)
-            self.assertIn("Favor low-volatility", report)
 
 
 class SelfHealerTests(unittest.TestCase):

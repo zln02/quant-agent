@@ -390,8 +390,8 @@ export default function BtcPage() {
             )}
           </Card>
 
-          {/* ── 에이전트 결정 로그 ── P2: promoted from 시장필터 to standalone ── */}
-          <Card title="에이전트 결정 로그" icon={<Clock size={14} />} delay={3} bodyClassName="p-0">
+          {/* ── 거래 로그 ── P2: promoted from 시장필터 to standalone ── */}
+          <Card title="거래 로그" icon={<Clock size={14} />} delay={3} bodyClassName="p-0">
             <div className="divide-y divide-white/5">
               {decisionRows.length === 0 ? (
                 <DecisionPlaceholder />

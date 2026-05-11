@@ -117,11 +117,6 @@ export const getUsRealtimeNews = (symbol = "AAPL", limit = 10) =>
 export const getUsRealtimePrice = (symbol) => fetchJSONSafe(`/api/us/realtime/price/${encodeURIComponent(symbol)}`);
 export const getUsRealtimeAlt = (symbol) => fetchJSONSafe(`/api/us/realtime/alt/${encodeURIComponent(symbol)}`);
 
-// Agents
-export const getAgentDecisions = (limit = 20) =>
-  fetchJSONSafe(`/api/agents/decisions?limit=${limit}`);
-export const getAgentPerformance = (period = "weekly") =>
-  fetchJSONSafe(`/api/agent-performance?period=${encodeURIComponent(period)}`);
 export const getRiskMetrics = () => fetchJSONSafe("/api/risk-metrics");
 
 // Health

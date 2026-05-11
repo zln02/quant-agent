@@ -24,5 +24,4 @@ brain/ml/backup_*
 .pytest_cache
 .mypy_cache
 node_modules/
-company/
 secretary/

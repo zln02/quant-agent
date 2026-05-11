@@ -5,7 +5,7 @@
 @quant/CLAUDE.md
 @execution/CLAUDE.md
 
-BTC(Upbit 실거래) / KR(Kiwoom 모의) / US(yfinance 시뮬) 3시장 자동매매. Claude 5-에이전트 팀.
+BTC(Upbit 실거래) / KR(Kiwoom 모의) / US(yfinance 시뮬) 3시장 자동매매. ML 기반 신호 파이프라인 + AI 전략 보조 모듈(레짐 분류 · 리포트 · 알림).
 
 ## 절대 규칙
 - **`btc/` 실거래 코드 수정 시 반드시 Plan Mode 먼저**
@@ -74,13 +74,11 @@ Daily     08:30 → stocks/ml_model.py retrain (if ≥50 trades)
 - KR: rule-based 60% + XGBoost ML 40% blend → Kiwoom paper order
 - US: multi-factor momentum ranking → regime gate → dry-run log only
 
-**AI agents** (`agents/`): 5-agent Claude team — Orchestrator (opus-4-6), MarketAnalyst + RiskManager (sonnet-4-6), NewsAnalyst + Reporter (haiku-4-5). Run via `python -m agents.trading_agent_team --market btc`.
+**AI agents** (`agents/`): 전략 보조 모듈 — `regime_classifier.py`(BULL/BEAR/SIDEWAYS/CRISIS 분류, 매 사이클), `alert_manager.py`(임계 위반 시 텔레그램 경보), `daily_report.py` / `weekly_report.py`(cron 일/주간 리포트). 5-에이전트 팀 폐기 (2026-05-10) — 상세는 [docs/AGENTS_DECOMM.md](docs/AGENTS_DECOMM.md).
 
 **Gateway Agent** (`agents/gateway_agent.py`): 텔레그램 자연어 인터페이스 보조 계층. `stocks/telegram_bot.py`의 `/ask`, `/market`, `/review`에서 직접 import되어 현재도 사용 중이다.
 
 **Level 5 Research loop** (`quant/`): weekly automated IC/IR evaluation → parameter auto-tuning → live agent feedback.
-
-**Company** (`company/`): CEO→specialist delegation (opus-4-6 → sonnet/haiku). Run: `python -m company --task "request"`. Bash sandbox with blocklist + `_safe_path()` workspace confinement.
 
 **Risk Management Layer**:
 
@@ -125,7 +123,7 @@ Daily     08:30 → stocks/ml_model.py retrain (if ≥50 trades)
 
 ## Dashboard Frontend
 
-Pages: `BtcPage`, `KrStockPage`, `UsStockPage`, `AgentsPage` — all in `dashboard/src/pages/`
+Pages: `BtcPage`, `KrStockPage`, `UsStockPage` — all in `dashboard/src/pages/`
 
 Chart timeframes:
 - BTC: `minute5/minute10/minute60/week/month/day` (pyupbit intervals)
