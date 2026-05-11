@@ -10,7 +10,7 @@
 ## 주요 기능
 
 - **3-Market Trading**: BTC (Upbit 실거래), KR (Kiwoom 모의), US (yfinance 시뮬)
-- **AI Agent Team**: Claude 5-에이전트 (Orchestrator + Analyst×2 + Risk + Reporter)
+- **AI Layer**: 레짐 분류 + 알림 + 일/주간 리포트
 - **ML Pipeline**: XGBoost + LightGBM + CatBoost Stacking Ensemble
 - **Quant Research Loop**: 주간 자동 IC/IR 평가 → 파라미터 최적화
 - **Smart Execution**: SmartRouter (MARKET/TWAP/VWAP), Slippage Tracker
@@ -29,8 +29,6 @@ graph TB
     end
     subgraph AI Layer
         RC[Regime Classifier]
-        NA[News Analyst]
-        AT[Agent Team<br/>5-agent Claude]
     end
     subgraph Quant Loop
         AR[Alpha Researcher<br/>Sat 22:00]
@@ -46,7 +44,6 @@ graph TB
     end
     BTC & KR & US --> DB
     RC --> BTC & KR & US
-    NA --> BTC & KR & US
     AR --> SE --> PO --> BTC & KR & US
     BTC & KR & US --> TG
     DASH --> DB
@@ -80,7 +77,7 @@ python btc/btc_dashboard.py  # Dashboard at :8080
 ```text
 ├── btc/              # BTC 에이전트 + FastAPI 라우트
 ├── stocks/           # KR/US 에이전트 + Kiwoom + ML + Telegram
-├── agents/           # AI 전략 계층 (레짐, 뉴스, 5-에이전트 팀)
+├── agents/           # AI 전략 보조 모듈 (레짐 분류, 알림, 리포트)
 ├── quant/            # 퀀트 엔진 (백테스트, 팩터, 포트폴리오, 리스크)
 ├── execution/        # 주문 실행 (SmartRouter, TWAP, VWAP)
 ├── common/           # 공통 인프라 (config, logger, Supabase, retry)
@@ -116,7 +113,6 @@ python btc/btc_dashboard.py  # Dashboard at :8080
 | /stop / /resume | 매매 일시정지/재개 |
 | /sell_all | 전량 매도 (확인 필요) |
 | /review | 주간 성과 리뷰 |
-| /agents | 에이전트 결정 로그 |
 | /ask | AI 질의 |
 | /help | 도움말 |
 
