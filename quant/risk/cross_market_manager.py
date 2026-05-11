@@ -153,13 +153,30 @@ class CrossMarketRiskManager:
         us = self._load_us_snapshot()
 
         total_position = btc.position_value + kr.position_value + us.position_value
+
         if total_capital <= 0:
-            total_capital = max(total_position, 1.0)
+            log.warning(
+                "cross_market_skip",
+                reason="total_capital_not_provided",
+                positions={
+                    "btc": btc.position_value,
+                    "kr": kr.position_value,
+                    "us": us.position_value,
+                },
+            )
+            return CrossMarketRiskResult(
+                total_equity=0.0,
+                total_exposure=total_position,
+                total_exposure_pct=0.0,
+                buy_blocked=False,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                market_weights={"btc": 0.0, "kr": 0.0, "us": 0.0},
+            )
 
         result = CrossMarketRiskResult(
             total_equity=total_capital,
             total_exposure=total_position,
-            total_exposure_pct=total_position / total_capital if total_capital > 0 else 0,
+            total_exposure_pct=total_position / total_capital,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
