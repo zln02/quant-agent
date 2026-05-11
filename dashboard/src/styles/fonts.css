@@ -1,0 +1,6 @@
+/*
+ * Self-hosted Pretendard variable (npm pretendard package).
+ * Dynamic Korean subset CSS — loads Latin first, Korean ranges on demand.
+ * License: SIL OFL 1.1 — see node_modules/pretendard/LICENSE
+ */
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
