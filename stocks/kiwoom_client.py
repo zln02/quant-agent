@@ -18,12 +18,12 @@
     KIWOOM_ACCOUNT_NO=5012345678
 """
 
-import os
 import json
+import os
 import time
-from pathlib import Path
-from typing import Dict, Optional, List
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Literal, Optional
 
 try:
     from dotenv import load_dotenv
@@ -112,6 +112,23 @@ def find_project_root() -> Path:
             break
         search = parent
     return Path.cwd()
+
+
+# ---- Order strategy mapping ----
+# 키움 REST API kt10000(매수)/kt10001(매도) body의 두 필드 쌍을 추상화.
+# - trde_tp: 거래구분 (0=보통/지정가, 3=시장가)
+# - ord_prc_ptn_cd: 호가구분 (00=일반, 03=시장가)
+#
+# 두 필드는 한 쌍으로 동시 셋팅되어야 함. STRATEGY_MAP은 키움 REST
+# 스펙의 매직 코드를 의미 있는 이름으로 추상화하여 호출자 의도를 명시.
+#
+# IOC/FOK는 키움 REST 공식 문서 확인 후 PR #9b에서 추가 예정.
+STRATEGY_MAP: Dict[str, Dict[str, str]] = {
+    "LIMIT":  {"trde_tp": "0", "ord_prc_ptn_cd": "00"},
+    "MARKET": {"trde_tp": "3", "ord_prc_ptn_cd": "03"},
+}
+
+OrderStrategy = Literal["LIMIT", "MARKET"]
 
 
 # ─────────────────────────────────────────────
@@ -443,26 +460,39 @@ class KiwoomAPIClient:
         quantity: int,
         price: int = 0,
         market: str = "KRX",
+        *,
+        order_strategy: Optional[OrderStrategy] = None,
     ) -> Dict:
         """
-        주식 주문 (buy/sell). 시장가 시 price=0. 실패 시 예외 발생.
+        주식 주문 (buy/sell). 실패 시 예외 발생.
 
         Args:
             stock_code: 종목 코드 (국내: '005930', 해외/기타: 'AAPL_NX' 등)
             order_type: 'buy' 또는 'sell'
             quantity: 주문 수량
-            price: 지정가 (0이면 시장가)
+            price: 지정가 (LIMIT 시 가격, MARKET 시 0)
             market: 거래소 구분 (기본 'KRX', 필요 시 문서 기준으로 'NXT', 'SOR' 등)
+            order_strategy: 'LIMIT' / 'MARKET' (keyword-only). None이면 price 기반 자동 추론
+                — price == 0 → MARKET, price > 0 → LIMIT. 100% 하위 호환.
+
+        호출 패턴:
+            place_order(code, 'buy', qty)                                  # MARKET 자동
+            place_order(code, 'buy', qty, price=70000)                     # LIMIT 자동
+            place_order(code, 'sell', qty, price=p, order_strategy='LIMIT')  # 명시
         """
         if order_type not in ("buy", "sell"):
             raise ValueError(f"order_type은 'buy' 또는 'sell': {order_type}")
         if quantity < 1:
             raise ValueError("수량은 1 이상이어야 합니다.")
 
+        if order_strategy is None:
+            order_strategy = "MARKET" if price == 0 else "LIMIT"
+        if order_strategy not in STRATEGY_MAP:
+            raise ValueError(f"unknown order_strategy: {order_strategy}")
+        strategy = STRATEGY_MAP[order_strategy]
+
         # 키움 REST API 주문: api-id는 kt10000(매수)/kt10001(매도). tr_id 헤더는 사용 안 함.
         api_id = "kt10000" if order_type == "buy" else "kt10001"
-        trde_tp = "3" if price == 0 else "0"  # 3=시장가, 0=보통(지정가)
-        ord_prc_ptn_cd = "03" if price == 0 else "00"
 
         acnt_no = (self.account_no or "")[:8]
         acnt_prdt_cd = (self.account_no or "")[8:] if len(self.account_no or "") > 8 else "01"
@@ -474,8 +504,8 @@ class KiwoomAPIClient:
             "stk_cd": stock_code,
             "ord_qty": str(quantity),
             "ord_uv": str(price),
-            "trde_tp": trde_tp,
-            "ord_prc_ptn_cd": ord_prc_ptn_cd,
+            "trde_tp": strategy["trde_tp"],
+            "ord_prc_ptn_cd": strategy["ord_prc_ptn_cd"],
         }
 
         extra_headers = {
@@ -485,7 +515,8 @@ class KiwoomAPIClient:
 
         _log(
             f"주문 요청: {order_type.upper()} {stock_code} "
-            f"{quantity}주 {'시장가' if price == 0 else f'{price:,}원'} (api-id={api_id})",
+            f"{quantity}주 {'시장가' if price == 0 else f'{price:,}원'} "
+            f"strategy={order_strategy} (api-id={api_id})",
             "TRADE",
         )
 
