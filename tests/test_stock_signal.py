@@ -95,9 +95,70 @@ def test_rule_based_signal_applies_regime_factor_adjustment(stock_agent):
     assert boosted["confidence"] >= base["confidence"], "regime factor adjustment should not reduce confidence"
 
 
-def test_get_trading_signal_blends_rule_and_ml(stock_agent, monkeypatch, tmp_path):
+def test_get_trading_signal_cold_start_module_missing(stock_agent, monkeypatch):
+    """콜드스타트 극단: ml_model 모듈 자체가 import 안 됨 → rule_based 단독."""
+    monkeypatch.delitem(sys.modules, "ml_model", raising=False)
+    monkeypatch.setattr(stock_agent, "analyze_with_ai", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        stock_agent,
+        "rule_based_signal",
+        lambda *args, **kwargs: {"action": "HOLD", "confidence": 33, "reason": "rule"},
+    )
+    signal = stock_agent.get_trading_signal(
+        stock={"code": "005930", "name": "Samsung"},
+        indicators={},
+        strategy={},
+        news="",
+        weekly={},
+        kospi={},
+        has_position=False,
+        supply={},
+    )
+    assert signal["confidence"] == 33, f"expected rule fallback confidence, got {signal}"
+
+
+def test_get_trading_signal_cold_start_meta_missing(stock_agent, monkeypatch, tmp_path):
+    """운영 콜드스타트: ml_model OK이나 ensemble_meta.json 부재 → AI 단독.
+
+    체결 50건 미달 → 매일 retrain 미동작 → 모델 메타 미생성 시나리오.
+    현재 prod 상태(trade_executions<50)와 동일. 실거래 시작 후 50건 도달 시
+    자동 해제됨.
+    """
+    horizon_dir = tmp_path / "horizon_3d"
+    horizon_dir.mkdir()  # ensemble_meta.json 미생성 — get_trading_signal 가드 차단
+    fake_ml = types.SimpleNamespace(
+        MODEL_DIR=tmp_path,
+        get_ml_signal=lambda _code: {"confidence": 90.0, "source": "ML", "features": {}, "action": "HOLD"},
+    )
+    monkeypatch.setitem(sys.modules, "ml_model", fake_ml)
+    monkeypatch.setattr(
+        stock_agent,
+        "analyze_with_ai",
+        lambda *args, **kwargs: {"action": "BUY", "confidence": 70.0, "reason": "ai"},
+    )
+
+    signal = stock_agent.get_trading_signal(
+        stock={"code": "005930", "name": "Samsung"},
+        indicators={},
+        strategy={},
+        news="",
+        weekly={},
+        kospi={},
+        has_position=False,
+        supply={},
+    )
+    assert signal["confidence"] == 70.0, f"expected AI-only confidence (ML gated), got {signal}"
+
+
+def test_get_trading_signal_blends_when_ml_active_and_weak(stock_agent, monkeypatch, tmp_path):
+    """ML active + 약신호(HOLD, conf=90) → rule/AI(BUY 70) + ML 60/40 blend.
+
+    1128 가드 조건(action ∈ {BUY,STRONG_BUY,SWING_BUY} AND conf >= 78)을
+    충족하지 않을 때만 블렌딩 분기(1165) 도달.
+    """
     horizon_dir = tmp_path / "horizon_3d"
     horizon_dir.mkdir()
+    (tmp_path / "ensemble_meta.json").write_text("{}")  # 핵심: 가드 통과
     fake_ml = types.SimpleNamespace(
         MODEL_DIR=tmp_path,
         get_ml_signal=lambda _code: {"confidence": 90.0, "source": "ML", "features": {}, "action": "HOLD"},
@@ -122,14 +183,21 @@ def test_get_trading_signal_blends_rule_and_ml(stock_agent, monkeypatch, tmp_pat
     assert signal["confidence"] == 78.0, f"expected 60/40 blend to be 78.0, got {signal}"
 
 
-def test_get_trading_signal_falls_back_to_rule_only(stock_agent, monkeypatch):
-    monkeypatch.delitem(sys.modules, "ml_model", raising=False)
-    monkeypatch.setattr(stock_agent, "analyze_with_ai", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        stock_agent,
-        "rule_based_signal",
-        lambda *args, **kwargs: {"action": "HOLD", "confidence": 33, "reason": "rule"},
+def test_get_trading_signal_ml_strong_returns_ml_alone(stock_agent, monkeypatch, tmp_path):
+    """ML active + 강신호(BUY, conf=90) → ML 단독 BUY (1128 분기).
+
+    블렌딩 안 함. ML confidence가 그대로 최종 confidence가 됨.
+    AI 분석은 무관 (1128에서 단독 return하므로).
+    """
+    horizon_dir = tmp_path / "horizon_3d"
+    horizon_dir.mkdir()
+    (tmp_path / "ensemble_meta.json").write_text("{}")
+    fake_ml = types.SimpleNamespace(
+        MODEL_DIR=tmp_path,
+        get_ml_signal=lambda _code: {"confidence": 90.0, "source": "ML", "features": {}, "action": "BUY"},
     )
+    monkeypatch.setitem(sys.modules, "ml_model", fake_ml)
+
     signal = stock_agent.get_trading_signal(
         stock={"code": "005930", "name": "Samsung"},
         indicators={},
@@ -140,7 +208,8 @@ def test_get_trading_signal_falls_back_to_rule_only(stock_agent, monkeypatch):
         has_position=False,
         supply={},
     )
-    assert signal["confidence"] == 33, f"expected rule fallback confidence, got {signal}"
+    assert signal["action"] == "BUY", f"expected ML-driven BUY, got {signal}"
+    assert signal["confidence"] == 90.0, f"expected ML-only confidence 90.0, got {signal}"
 
 
 def test_check_daily_loss_returns_true_on_limit_breach(stock_agent, mock_telegram):
