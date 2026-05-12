@@ -1,0 +1,89 @@
+/* ── 디자인 토큰 (Toss-style, KR 시그널 표준) ───────────────────────────
+ * :root            — 테마 불변 (브랜드, 시그널 RGB-split, radius, padding)
+ * [data-theme=*]   — 시맨틱 토큰 (라이트/다크 분기)
+ *
+ * KR 표준: 상승 = 빨강(#F04452), 하락 = 파랑(#1E4FCE)
+ * 변수명(--profit / --loss)은 의미어로 유지하되 시각만 KR 표준 적용.
+ */
+
+:root {
+  /* ── 반경 ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* ── Toss brand ── */
+  --toss-blue: #3182F6;
+  --toss-blue-100: #DBEAFE;
+  --toss-blue-700: #1856C6;
+  --toss-blue-rgb: 49 130 246;
+
+  /* ── 시맨틱 시그널 (RGB-split, shadcn rgba() 호환) ── */
+  --color-gain: 240 68 82;       /* #F04452 — KR 상승 (빨강) */
+  --color-loss: 30 79 206;       /* #1E4FCE — KR 하락 (파랑) */
+  --color-neutral: 107 114 128;  /* #6B7280 */
+  --color-warning: 245 158 11;   /* #F59E0B */
+
+  /* ── shadcn 레이아웃 ── */
+  --card-padding-sm: 14px;
+  --card-padding-md: 20px;
+  --card-padding-lg: 28px;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────── */
+html[data-theme="light"] {
+  --bg-primary:    #FFFFFF;
+  --bg-secondary:  #F9FAFB;
+  --bg-card:       #FFFFFF;
+  --bg-hover:      rgba(0, 0, 0, 0.03);
+  --bg-glass:      #FFFFFF;
+  --border-subtle: #E5E8EB;
+  --border-glass:  #E5E8EB;
+  --text-primary:  #191F28;
+  --text-secondary:#6B7684;
+
+  --accent-blue:   var(--toss-blue);
+  --accent-purple: #6D28D9;
+
+  --profit:        #F04452;
+  --loss:          #1E4FCE;
+  --warning:       #F59E0B;
+  --neutral:       #6B7280;
+  --chart-up:      #F04452;
+  --chart-down:    #1E4FCE;
+  --profit-bg:     rgba(240, 68, 82, 0.08);
+  --loss-bg:       rgba(30, 79, 206, 0.08);
+
+  --shadow-lg:     0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(17, 24, 39, 0.06);
+  --shadow-glow:   0 0 0 1px rgba(49, 130, 246, 0.18), 0 8px 24px rgba(49, 130, 246, 0.10);
+  --gradient-main: linear-gradient(135deg, #3182F6, #6D28D9);
+}
+
+/* ── Dark theme (KR 색만 정렬, 기타 다크 골격 유지) ───────────────────── */
+html[data-theme="dark"] {
+  --bg-primary:    #0A0A0F;
+  --bg-secondary:  #11141B;
+  --bg-card:       rgba(18, 20, 28, 0.96);
+  --bg-hover:      rgba(255, 255, 255, 0.04);
+  --bg-glass:      rgba(255, 255, 255, 0.025);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-glass:  rgba(255, 255, 255, 0.07);
+  --text-primary:  #E8E8EF;
+  --text-secondary:#8B8B9E;
+
+  --accent-blue:   var(--toss-blue);
+  --accent-purple: #8B5CF6;
+
+  --profit:        #F04452;
+  --loss:          #1E4FCE;
+  --warning:       #F59E0B;
+  --neutral:       #6B7280;
+  --chart-up:      #F04452;
+  --chart-down:    #1E4FCE;
+  --profit-bg:     rgba(240, 68, 82, 0.10);
+  --loss-bg:       rgba(30, 79, 206, 0.10);
+
+  --shadow-lg:     0 10px 28px rgba(0, 0, 0, 0.28);
+  --shadow-glow:   0 0 0 1px rgba(49, 130, 246, 0.20), 0 24px 80px rgba(15, 23, 42, 0.45);
+  --gradient-main: linear-gradient(135deg, #3182F6, #8B5CF6);
+}

@@ -13,12 +13,13 @@ export default {
           secondary: "#8b8d9a",
           muted: "#6b6d7a"
         },
-        profit: "#00c087",
-        loss: "#ff4757",
-        accent: "#3b82f6"
+        // KR 시그널 — tokens.css의 RGB-split 토큰을 SSOT로 참조
+        profit: "rgb(var(--color-gain) / <alpha-value>)",
+        loss: "rgb(var(--color-loss) / <alpha-value>)",
+        accent: "rgb(var(--toss-blue-rgb) / <alpha-value>)"
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        sans: ["Pretendard Variable", "Pretendard", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"]
       },
       borderRadius: {

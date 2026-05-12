@@ -1,3 +1,5 @@
+@import "./styles/tokens.css";
+
 :root {
   --bg-primary: #0a0a0f;
   --bg-secondary: #11141b;
@@ -8,19 +10,20 @@
   --accent-purple: #8b5cf6;
   --accent-blue: #3b82f6;
   --gradient-main: linear-gradient(135deg, #8b5cf6, #3b82f6);
-  --profit: #22c55e;
-  --loss: #ef4444;
+  /* KR 시그널 색 — tokens.css의 --color-gain/--color-loss를 SSOT로 참조 */
+  --profit: rgb(var(--color-gain));
+  --loss: rgb(var(--color-loss));
   --warning: #f59e0b;
   --glass-blur: 12px;
   --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.28);
   --shadow-glow: 0 0 0 1px rgba(139, 92, 246, 0.18), 0 24px 80px rgba(15, 23, 42, 0.45);
-  --chart-up: #22c55e;
-  --chart-down: #ef4444;
+  --chart-up: var(--profit);
+  --chart-down: var(--loss);
   --border-subtle: rgba(255, 255, 255, 0.06);
   --bg-hover: rgba(255, 255, 255, 0.04);
   --bg-card: rgba(18, 20, 28, 0.96);
-  --profit-bg: rgba(34, 197, 94, 0.08);
-  --loss-bg: rgba(239, 68, 68, 0.08);
+  --profit-bg: rgba(var(--color-gain), 0.08);
+  --loss-bg: rgba(var(--color-loss), 0.08);
   --neutral: #6b7280;
 }
 
@@ -49,11 +52,13 @@ body {
     var(--bg-primary);
   background-size: 24px 24px, 24px 24px, auto, auto, auto;
   font-family:
-    "Inter",
-    "Pretendard",
-    system-ui,
+    "Pretendard Variable",
+    Pretendard,
     -apple-system,
     BlinkMacSystemFont,
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    system-ui,
     "Segoe UI",
     sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -223,7 +228,7 @@ textarea {
 
 .glass-card--profit {
   background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(255, 255, 255, 0.03)),
+    linear-gradient(135deg, rgba(var(--color-gain), 0.08), rgba(255, 255, 255, 0.03)),
     rgba(255, 255, 255, 0.03);
 }
 
@@ -231,15 +236,15 @@ textarea {
   background:
     linear-gradient(
       135deg,
-      rgba(34, 197, 94, 0.55),
-      rgba(34, 197, 94, 0.18),
+      rgba(var(--color-gain), 0.55),
+      rgba(var(--color-gain), 0.18),
       rgba(59, 130, 246, 0.25)
     );
 }
 
 .glass-card--loss {
   background:
-    linear-gradient(135deg, rgba(239, 68, 68, 0.08), rgba(255, 255, 255, 0.03)),
+    linear-gradient(135deg, rgba(var(--color-loss), 0.08), rgba(255, 255, 255, 0.03)),
     rgba(255, 255, 255, 0.03);
 }
 
@@ -247,8 +252,8 @@ textarea {
   background:
     linear-gradient(
       135deg,
-      rgba(239, 68, 68, 0.58),
-      rgba(239, 68, 68, 0.18),
+      rgba(var(--color-loss), 0.58),
+      rgba(var(--color-loss), 0.18),
       rgba(139, 92, 246, 0.2)
     );
 }
@@ -757,7 +762,7 @@ textarea {
   height: 8px;
   border-radius: 999px;
   background: var(--profit);
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 6px rgba(var(--color-gain), 0.3);
   animation: livePulse 1.5s infinite;
 }
 
@@ -1051,10 +1056,10 @@ textarea {
 @keyframes crisisPulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 0 0 rgba(var(--color-loss), 0.4);
   }
   50% {
-    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    box-shadow: 0 0 0 10px rgba(var(--color-loss), 0);
   }
 }
 
