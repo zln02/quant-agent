@@ -1,6 +1,7 @@
 # btc_news_collector.py
-import requests
 import os
+
+import requests
 
 
 def get_news_summary() -> str:
@@ -147,3 +148,47 @@ def get_news_result() -> dict:
 
 # btc_trading_agent.py 호환용
 collect_news_summary = get_news_summary
+
+
+def persist_to_db(posts: list, sentiment_score: float) -> int:
+    """news_articles 테이블에 upsert. 거래 사이클에서는 호출 금지(raise 흡수)."""
+    try:
+        from common.logger import get_logger
+        from common.supabase_client import get_supabase
+        sb = get_supabase()
+        log = get_logger("btc_news_persist")
+        if not sb or not posts:
+            return 0
+
+        label = ("positive" if sentiment_score > 0.2
+                 else "negative" if sentiment_score < -0.2
+                 else "neutral")
+        rows = []
+        for p in posts:
+            url = p.get("url")
+            if not url:
+                continue
+            rows.append({
+                "market": "btc",
+                "symbol": "BTC",
+                "source": "cryptopanic",
+                "headline": p.get("title", ""),
+                "content": p.get("description"),
+                "url": url,
+                "sentiment_score": sentiment_score,
+                "sentiment_label": label,
+                "published_at": p.get("published_at"),
+            })
+        if not rows:
+            return 0
+
+        sb.table("news_articles").upsert(rows, on_conflict="url").execute()
+        log.info(f"뉴스 {len(rows)}건 영속화")
+        return len(rows)
+    except Exception as e:
+        try:
+            from common.logger import get_logger
+            get_logger("btc_news_persist").warning(f"뉴스 영속화 실패: {e}")
+        except Exception:
+            pass
+        return 0

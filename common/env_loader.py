@@ -54,6 +54,7 @@ def load_env() -> None:
             pass
 
     env_files = [
+        Path(__file__).resolve().parents[1] / ".env",  # quant-agent/.env (host cron)
         OPENCLAW_ROOT / ".env",
         WORKSPACE / ".env",
         WORKSPACE / "skills" / "kiwoom-api" / ".env",
@@ -68,7 +69,8 @@ def load_env() -> None:
             continue
 
     # Docker/runtime secrets: container mount or local workspace secret directory.
-    for secrets_dir in (Path("/run/local-secrets"), WORKSPACE / ".docker-secrets"):
+    _quant_secrets = Path(__file__).resolve().parents[1] / ".docker-secrets"
+    for secrets_dir in (Path("/run/local-secrets"), _quant_secrets, WORKSPACE / ".docker-secrets"):
         if not secrets_dir.is_dir():
             continue
         for secret_file in secrets_dir.iterdir():

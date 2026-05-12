@@ -85,6 +85,12 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 20 22 * * 1-5 /home/wlsdud5035/quant-agent/.venv/bin/python /home/wlsdud5035/quant-agent/stocks/us_ml_drift_monitor.py --auto-retrain >> /home/wlsdud5035/.openclaw/logs/us_ml_drift_monitor.log 2>&1
 
 # --- Data collection ---
+# BTC alt_data (김치/Fear&Greed/USD-KRW, 매시간 정각)
+0 * * * * cd /home/wlsdud5035/quant-agent && .venv/bin/python scripts/collect_btc_alt_data.py >> /home/wlsdud5035/.openclaw/logs/btc_alt_data.log 2>&1
+
+# BTC 뉴스 영속화 (cryptopanic v2 → news_articles, 10분)
+*/10 * * * * cd /home/wlsdud5035/quant-agent && .venv/bin/python scripts/collect_btc_news.py >> /home/wlsdud5035/.openclaw/logs/btc_news.log 2>&1
+
 # KR 분봉 수집 (장중 30분마다)
 */30 9-15 * * 1-5 cd /home/wlsdud5035/quant-agent && .venv/bin/python stocks/stock_data_collector.py intraday >> /home/wlsdud5035/.openclaw/logs/intraday.log 2>&1
 

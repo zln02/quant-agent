@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.env_loader import load_env
+
+load_env()
+
 from common.logger import get_logger
 from common.supabase_client import get_supabase
 
