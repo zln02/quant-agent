@@ -5,6 +5,7 @@ import { getBtcComposite, getBtcPortfolio, getHealth, getStockPortfolio, getUsPo
 import ConnectionStatus from "./ui/ConnectionStatus";
 import HeroBanner from "./ui/HeroBanner";
 import StatusBadge from "./ui/StatusBadge";
+import { ThemeToggle } from "./ui/ThemeToggle";
 import { LangProvider, useLang } from "../hooks/useLang";
 
 const NAV = [
@@ -160,6 +161,7 @@ function LayoutInner() {
               >
                 {lang === "ko" ? "EN" : "KO"}
               </button>
+              <ThemeToggle />
               <StatusBadge status={regime} />
               <ConnectionStatus updatedAt={updatedAt} intervalMs={30000} />
             </div>
