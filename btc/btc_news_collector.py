@@ -150,7 +150,7 @@ def get_news_result() -> dict:
 collect_news_summary = get_news_summary
 
 
-def persist_to_db(posts: list, sentiment_score: float) -> int:
+def persist_to_db(posts: list, sentiment_score: float, source: str = "cryptopanic") -> int:
     """news_articles 테이블에 upsert. 거래 사이클에서는 호출 금지(raise 흡수)."""
     try:
         from common.logger import get_logger
@@ -171,7 +171,7 @@ def persist_to_db(posts: list, sentiment_score: float) -> int:
             rows.append({
                 "market": "btc",
                 "symbol": "BTC",
-                "source": "cryptopanic",
+                "source": source,
                 "headline": p.get("title", ""),
                 "content": p.get("description"),
                 "url": url,
