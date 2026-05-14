@@ -70,7 +70,7 @@ def load_env() -> None:
 
     # Docker/runtime secrets: container mount or local workspace secret directory.
     _quant_secrets = Path(__file__).resolve().parents[1] / ".docker-secrets"
-    for secrets_dir in (Path("/run/local-secrets"), _quant_secrets, WORKSPACE / ".docker-secrets"):
+    for secrets_dir in (Path("/run/local-secrets"), Path("/run/secrets/openclaw"), _quant_secrets, WORKSPACE / ".docker-secrets"):
         if not secrets_dir.is_dir():
             continue
         for secret_file in secrets_dir.iterdir():
