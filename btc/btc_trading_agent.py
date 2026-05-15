@@ -1509,24 +1509,23 @@ def save_log(
             "composite_score":    (comp or {}).get("total") if isinstance(comp, dict) else None,
         }
 
-        # 팩터 스냅샷 수집 (Phase Level 4: 팩터 로깅)
-        if row.get("action") in ("BUY", "SELL"):
-            try:
-                import sys as _sys
-                _WORKSPACE_PATH = str(Path(__file__).resolve().parents[1])
-                if _WORKSPACE_PATH not in _sys.path:
-                    _sys.path.insert(0, _WORKSPACE_PATH)
-                from quant.factors.registry import FactorContext, calc_all
-                _fctx = FactorContext()
-                _today_iso = datetime.now(timezone.utc).date().isoformat()
-                _all_factors = calc_all(_today_iso, symbol="BTC", market="btc", context=_fctx)
-                _top5 = dict(
-                    sorted(_all_factors.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
-                )
-                row["factor_snapshot"] = json.dumps(_top5, ensure_ascii=False)
-                log.info(f"BTC 팩터 스냅샷 수집: {list(_top5.keys())}")
-            except Exception as _fe:
-                log.warning(f"BTC 팩터 스냅샷 건너뜀: {_fe}")
+        # 팩터 스냅샷 수집 — 모든 사이클(HOLD 포함). ML sequence 학습용.
+        try:
+            import sys as _sys
+            _WORKSPACE_PATH = str(Path(__file__).resolve().parents[1])
+            if _WORKSPACE_PATH not in _sys.path:
+                _sys.path.insert(0, _WORKSPACE_PATH)
+            from quant.factors.registry import FactorContext, calc_all
+            _fctx = FactorContext()
+            _today_iso = datetime.now(timezone.utc).date().isoformat()
+            _all_factors = calc_all(_today_iso, symbol="BTC", market="btc", context=_fctx)
+            _top5 = dict(
+                sorted(_all_factors.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
+            )
+            row["factor_snapshot"] = json.dumps(_top5, ensure_ascii=False)
+            log.info(f"BTC 팩터 스냅샷 수집: {list(_top5.keys())}")
+        except Exception as _fe:
+            log.warning(f"BTC 팩터 스냅샷 건너뜀: {_fe}")
 
         try:
             supabase.table("btc_trades").insert(row).execute()
