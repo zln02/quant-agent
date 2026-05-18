@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,23 @@ def _proxy_symbol(symbol: str) -> str:
     return sym
 
 
+def _normalize_btc_equity(equity: float, metadata: dict) -> float:
+    """2026-04-10 이후 적재된 BTC equity 일부는 KRW 환산이 안 된 코인 수량.
+
+    `metadata.price` 가 모든 row에 함께 저장되므로 외부 시세 조회 없이
+    KRW 환산. `equity` 절대값으로 단위 자동 감지:
+      - equity < 1000 + price > 0 → 코인 수량으로 간주, KRW 환산
+      - 그 외 → 이미 KRW (또는 환산 불가) → 원본 유지
+
+    임계 1000은 보수적 — 운영 BTC 잔고는 KRW 환산 시 항상 1만 이상이고,
+    코인 수량은 0.0001~100 범위라 임계와 겹치지 않음.
+    """
+    price = _safe_float((metadata or {}).get("price"), 0.0)
+    if 0 < equity < 1000 and price > 0:
+        return equity * price
+    return equity
+
+
 def _load_latest_equity_series(days: int = 60) -> dict[str, float]:
     """
     마켓별 일별 equity를 로드하고 fill-forward 후 합산하여 반환.
@@ -57,6 +74,13 @@ def _load_latest_equity_series(days: int = 60) -> dict[str, float]:
       2. 마켓별 fill-forward 적용: 중간 날짜 데이터 공백으로 인한 peak→trough 오계산 방지
       3. 각 마켓은 첫 데이터 날짜~마지막 데이터 날짜 범위만 포함 (오래된 마켓 제외)
       4. 최소 2개 이상 유효 데이터 포인트가 있는 마켓만 포함
+    - v3 (2026-05-18): BTC equity 단위 혼재 패치 — btc.jsonl 의 L1409+ 가 KRW 환산
+      안 된 코인 수량(예 22.16)으로 박혀 KR 누락 시점에 -99.99% 가짜 drawdown 발화.
+      row 단위로 _normalize_btc_equity() 호출하여 metadata.price 활용 KRW 환산.
+      추가로 jsonl 파싱 try-except를 라인별로 이동: 동시 append race로 1건 깨진 줄이
+      있어도 마켓 전체가 skip되던 fault 차단 (이전엔 series 비어 drawdown 항상 0).
+      그리고 마지막 데이터 이후 N일까지 forward-fill stale tolerance 도입: 한 마켓
+      적재가 1~2일 지연될 때 다른 마켓 단독 합산으로 인한 가짜 drawdown 차단.
     """
     cutoff = (_utc_now().date() - timedelta(days=max(days, 30))).isoformat()
 
@@ -67,23 +91,26 @@ def _load_latest_equity_series(days: int = 60) -> dict[str, float]:
         if not path.exists():
             continue
         by_day: dict[str, float] = {}
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
                 row = json.loads(line)
-                day = str(row.get("date") or "")[:10]
-                if not day or day < cutoff:
-                    continue
-                # virtual_capital은 통화 단위가 달라 합산 대상에서 제외
-                source = (row.get("metadata") or {}).get("source", "")
-                if source == "virtual_capital":
-                    continue
-                equity = _safe_float(row.get("equity"), 0.0)
-                if equity > 0:
-                    by_day[day] = equity  # 같은 날이면 마지막 값 유지
-        except Exception:
-            continue
+            except Exception:
+                continue  # 동시 append race로 깨진 줄이면 해당 줄만 skip
+            day = str(row.get("date") or "")[:10]
+            if not day or day < cutoff:
+                continue
+            # virtual_capital은 통화 단위가 달라 합산 대상에서 제외
+            metadata = row.get("metadata") or {}
+            source = metadata.get("source", "")
+            if source == "virtual_capital":
+                continue
+            equity = _safe_float(row.get("equity"), 0.0)
+            if market == "btc":
+                equity = _normalize_btc_equity(equity, metadata)
+            if equity > 0:
+                by_day[day] = equity  # 같은 날이면 마지막 값 유지
         if len(by_day) >= 2:  # 데이터 포인트가 2개 이상인 마켓만 포함
             market_by_day[market] = by_day
 
@@ -95,17 +122,25 @@ def _load_latest_equity_series(days: int = 60) -> dict[str, float]:
     if not all_days:
         return {}
 
-    # 마켓별 fill-forward: 첫 데이터~마지막 데이터 범위만 보간 (범위 밖 제외)
+    # 마켓별 fill-forward: 첫 데이터 이전 제외 + 마지막 데이터 이후 N일 stale tolerance.
+    # last_day 이후 N일까지는 마지막 값으로 forward fill (적재 지연 대응),
+    # 그 이상 stale은 합산 제외하여 다른 마켓과 비대칭 합산을 방지.
+    _STALE_FILL_TOLERANCE_DAYS = 3
     filled: dict[str, dict[str, float]] = {}
     for market, by_day in market_by_day.items():
         sorted_days = sorted(by_day.keys())
         first_day = sorted_days[0]
         last_day = sorted_days[-1]
+        last_day_obj = date.fromisoformat(last_day)
         last_val = 0.0
         mfilled: dict[str, float] = {}
         for day in all_days:
-            if day < first_day or day > last_day:
-                continue  # 이 마켓 활성 범위 밖이면 제외
+            if day < first_day:
+                continue  # 첫 데이터 이전이면 제외
+            if day > last_day:
+                gap = (date.fromisoformat(day) - last_day_obj).days
+                if gap > _STALE_FILL_TOLERANCE_DAYS:
+                    continue  # 너무 stale한 마켓은 제외 (잔여 잔고로 다른 마켓과 비대칭 합산 방지)
             if day in by_day:
                 last_val = by_day[day]
             if last_val > 0:
