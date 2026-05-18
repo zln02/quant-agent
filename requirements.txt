@@ -39,6 +39,7 @@ psutil>=5.9.0,<7.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+holidays>=0.35  # KR 공휴일 (PR #24 silence_monitor)
 
 # Google Sheets (optional, for sheets_logger fallback when gog CLI unavailable)
 # gspread>=5.12.0
