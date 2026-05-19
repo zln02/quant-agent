@@ -6,36 +6,36 @@ BTC 자동매매 에이전트 v6 — Top-tier Quant
       동적 가중치 복합스코어, 적응형 트레일링, 부분익절
 """
 
-import os, json, sys, requests
+import json
+import os
+import sys
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo  # v6.2 B2: KST 시간대 통일
 from pathlib import Path
+from zoneinfo import ZoneInfo  # v6.2 B2: KST 시간대 통일
+
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common.config import (BTC_AI_CACHE_TTL, BTC_DAILY_CACHE_TTL,
+                           BTC_DB_RETRY_COUNT, BTC_DB_RETRY_SLEEP,
+                           BTC_EXECUTION_SLIPPAGE, BTC_FG_API_TIMEOUT, BTC_LOG,
+                           BTC_MARKET_COUNT, BTC_MARKET_INTERVAL)
 from common.env_loader import load_env
-from common.telegram import send_telegram as _tg_send, Priority as _TgPriority
-from common.supabase_client import get_supabase
+from common.equity_loader import (append_equity_snapshot,
+                                  get_effective_market_weight,
+                                  load_equity_curve, load_recent_trades,
+                                  save_drawdown_state)
 from common.logger import get_logger
-from common.retry import retry, retry_call
-from common.config import (
-    BTC_LOG,
-    BTC_MARKET_INTERVAL, BTC_MARKET_COUNT,
-    BTC_FG_API_TIMEOUT, BTC_DAILY_CACHE_TTL, BTC_AI_CACHE_TTL,
-    BTC_EXECUTION_SLIPPAGE, BTC_DB_RETRY_SLEEP, BTC_DB_RETRY_COUNT,
-)
-from common.utils import generate_order_id, check_order_idempotency
-from common.equity_loader import (
-    append_equity_snapshot,
-    get_effective_market_weight,
-    load_equity_curve,
-    load_recent_trades,
-    save_drawdown_state,
-)
+from common.retry import retry_call
+from common.supabase_client import get_supabase
+from common.telegram import Priority as _TgPriority
+from common.telegram import send_telegram as _tg_send
+from common.utils import check_order_idempotency, generate_order_id
+from execution.smart_router import SmartRouter
 from quant.risk.drawdown_guard import DrawdownGuard
 from quant.risk.drawdown_state_store import DrawdownStateStore
 from quant.risk.position_sizer import KellyPositionSizer
-from execution.smart_router import SmartRouter
 
 try:
     from common.sheets_logger import append_trade as _sheets_append
@@ -51,8 +51,9 @@ load_env()
 log = get_logger("btc_agent", BTC_LOG)
 
 import pyupbit
-from common.llm_client import call_haiku, is_quota_exceeded
-from btc_news_collector import get_news_summary, get_news_result as _get_news_result
+from btc_news_collector import get_news_result as _get_news_result
+
+from common.llm_client import is_quota_exceeded
 
 
 def _parse_entry_time(value) -> datetime | None:
@@ -149,15 +150,16 @@ def _apply_weighted_score(components: dict, *, weights: dict) -> int:
     total = max(0, min(int(round(raw_scaled)), 100))
     return total
 
+
 # ── 환경변수 ──────────────────────────────────────
-UPBIT_ACCESS  = os.environ.get("UPBIT_ACCESS_KEY", "")
-UPBIT_SECRET  = os.environ.get("UPBIT_SECRET_KEY", "")
-DRY_RUN       = os.environ.get("DRY_RUN", "0") == "1"
+UPBIT_ACCESS = os.environ.get("UPBIT_ACCESS_KEY", "")
+UPBIT_SECRET = os.environ.get("UPBIT_SECRET_KEY", "")
+DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 RUNTIME_ENV_READY = all([UPBIT_ACCESS, UPBIT_SECRET])
 
 if not RUNTIME_ENV_READY:
     log.warning("필수 환경변수 부족: 에이전트 실행은 제한되지만 API helper import는 허용")
-upbit   = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET) if UPBIT_ACCESS and UPBIT_SECRET else None
+upbit = pyupbit.Upbit(UPBIT_ACCESS, UPBIT_SECRET) if UPBIT_ACCESS and UPBIT_SECRET else None
 supabase = get_supabase()
 _btc_buy_blocked = False
 # audit fix: CrossMarket 리스크 — 모듈 레벨 싱글턴 (매 사이클 재사용)
@@ -165,35 +167,35 @@ _cmr_instance = None
 
 # ── 리스크 설정 (v6 — Top-tier Quant) ─────────────
 RISK = {
-    "split_ratios":     [0.15, 0.25, 0.40],     # 스코어 높을수록 큰 비중
-    "split_rsi":        [55,   45,   35  ],
-    "invest_ratio":      0.30,
-    "stop_loss":        -0.03,
-    "take_profit":       0.08,        # audit fix: config BTC_RISK_DEFAULTS 기준으로 통일 (+8%)
-    "partial_tp_pct":    0.03,        # audit fix: config BTC_RISK_DEFAULTS 기준으로 통일 (3%)
-    "partial_tp_ratio":  0.50,        # 1단계 매도 비율 (50%)
-    "partial_tp_2_pct":  0.06,        # 2단계 익절 발동 (6%, 1단계 3% 기준으로 조정)
+    "split_ratios": [0.15, 0.25, 0.40],     # 스코어 높을수록 큰 비중
+    "split_rsi": [55, 45, 35],
+    "invest_ratio": 0.30,
+    "stop_loss": -0.03,
+    "take_profit": 0.08,        # audit fix: config BTC_RISK_DEFAULTS 기준으로 통일 (+8%)
+    "partial_tp_pct": 0.03,        # audit fix: config BTC_RISK_DEFAULTS 기준으로 통일 (3%)
+    "partial_tp_ratio": 0.50,        # 1단계 매도 비율 (50%)
+    "partial_tp_2_pct": 0.06,        # 2단계 익절 발동 (6%, 1단계 3% 기준으로 조정)
     "partial_tp_2_ratio": 0.50,       # 2단계 매도 비율 (남은 물량의 50%)
-    "atr_multiplier":    2.0,         # ATR 손절 배수 (진입가 - ATR * 2.0)
-    "atr_period":        14,          # ATR 계산 기간
-    "trailing_stop":     0.02,
+    "atr_multiplier": 2.0,         # ATR 손절 배수 (진입가 - ATR * 2.0)
+    "atr_period": 14,          # ATR 계산 기간
+    "trailing_stop": 0.02,
     "trailing_activate": 0.015,
     "trailing_adaptive": True,
-    "max_daily_loss":   -0.08,
-    "max_drawdown":     -0.15,
-    "min_confidence":    65,
+    "max_daily_loss": -0.08,
+    "max_drawdown": -0.15,
+    "min_confidence": 65,
     "max_trades_per_day": 2,           # 3 → 2 (수수료 절감)
-    "fee_buy":           0.001,
-    "fee_sell":          0.001,
+    "fee_buy": 0.001,
+    "fee_sell": 0.001,
     "buy_composite_min": 50,           # 43 → 50 (고확신 진입만)
     "sell_composite_max": 20,
-    "timecut_days":      7,
-    "cooldown_minutes":  60,           # 30 → 60분 (진입 빈도 감소)
+    "timecut_days": 7,
+    "cooldown_minutes": 60,           # 30 → 60분 (진입 빈도 감소)
     "volatility_filter": True,
-    "funding_filter":    True,      # 펀딩비 과열 시 매수 억제
-    "oi_filter":         True,      # OI 급등 시 경고
+    "funding_filter": True,      # 펀딩비 과열 시 매수 억제
+    "oi_filter": True,      # OI 급등 시 경고
     "kimchi_premium_max": 5.0,      # 김치프리미엄 5% 이상 시 매수 차단
-    "dynamic_weights":   True,      # 시장 상태 기반 스코어 가중치 동적 조절
+    "dynamic_weights": True,      # 시장 상태 기반 스코어 가중치 동적 조절
 }
 
 # ── Level 5: 파라미터 자동 로드 (param_optimizer / alpha_researcher) ──
@@ -231,6 +233,8 @@ except Exception as _e:
     log.debug(f"Level5 best_params 로드 스킵: {_e}")
 
 # ── 텔레그램 ──────────────────────────────────────
+
+
 def send_telegram(msg: str, priority: "_TgPriority" = _TgPriority.URGENT) -> None:
     _tg_send(msg, priority=priority)
 
@@ -278,7 +282,7 @@ def _execute_buy(invest_krw: float) -> dict | None:
 
 
 # ── 시장 데이터 ───────────────────────────────────
-def get_market_data() -> "pd.DataFrame | None":
+def get_market_data() -> "pd.DataFrame | None":  # noqa: F821 — forward-ref string
     return pyupbit.get_ohlcv("KRW-BTC", interval=BTC_MARKET_INTERVAL, count=BTC_MARKET_COUNT)
 
 
@@ -297,40 +301,44 @@ def _latest_market_price() -> float:
     return 0.0
 
 # ── 기술적 지표 ───────────────────────────────────
-def calculate_indicators(df) -> dict:
-    from ta.trend import EMAIndicator, MACD
-    from ta.momentum import RSIIndicator
-    from ta.volatility import BollingerBands, AverageTrueRange
 
-    close   = df["close"]
-    rsi_w   = int(_l5_params.get("rsi_window", 14))
-    bb_w    = int(_l5_params.get("bb_window", 20))
+
+def calculate_indicators(df) -> dict:
+    from ta.momentum import RSIIndicator
+    from ta.trend import MACD, EMAIndicator
+    from ta.volatility import AverageTrueRange, BollingerBands
+
+    close = df["close"]
+    rsi_w = int(_l5_params.get("rsi_window", 14))
+    bb_w = int(_l5_params.get("bb_window", 20))
     ema20 = EMAIndicator(close, window=20).ema_indicator().iloc[-1]
     ema50 = EMAIndicator(close, window=50).ema_indicator().iloc[-1]
-    rsi   = RSIIndicator(close, window=rsi_w).rsi().iloc[-1]
+    rsi = RSIIndicator(close, window=rsi_w).rsi().iloc[-1]
     macd_obj = MACD(close)
-    macd  = macd_obj.macd_diff().iloc[-1]
-    bb    = BollingerBands(close, window=bb_w)
-    atr   = AverageTrueRange(df["high"], df["low"], close, window=14).average_true_range().iloc[-1]
+    macd = macd_obj.macd_diff().iloc[-1]
+    bb = BollingerBands(close, window=bb_w)
+    atr = AverageTrueRange(df["high"], df["low"], close, window=14).average_true_range().iloc[-1]
 
     return {
-        "price":    df["close"].iloc[-1],
-        "ema20":    round(ema20, 0),
-        "ema50":    round(ema50, 0),
-        "rsi":      round(rsi, 1),
-        "macd":     round(macd, 0),
+        "price": df["close"].iloc[-1],
+        "ema20": round(ema20, 0),
+        "ema50": round(ema50, 0),
+        "rsi": round(rsi, 1),
+        "macd": round(macd, 0),
         "bb_upper": round(bb.bollinger_hband().iloc[-1], 0),
         "bb_lower": round(bb.bollinger_lband().iloc[-1], 0),
-        "volume":   round(df["volume"].iloc[-1], 4),
-        "atr":      round(atr, 0),
+        "volume": round(df["volume"].iloc[-1], 4),
+        "atr": round(atr, 0),
     }
 
 # ── 거래량 분석 ───────────────────────────────────
+
+
 def get_volume_analysis(df) -> dict:
     try:
         if df is None or df.empty or "volume" not in df.columns:
             return {"ratio": 1.0, "label": "거래량 분석 실패"}
-        cur   = df["volume"].iloc[-1]
+        cur = df["volume"].iloc[-1]
         avg20 = df["volume"].rolling(20).mean().iloc[-1]
         ratio = round(cur / avg20, 2) if avg20 > 0 else 1.0
 
@@ -361,13 +369,15 @@ def get_volume_analysis(df) -> dict:
         return {"ratio": 1.0, "label": "거래량 분석 실패"}
 
 # ── Fear & Greed ──────────────────────────────────
+
+
 def get_fear_greed() -> dict:
     try:
         res = retry_call(requests.get, args=("https://api.alternative.me/fng/?limit=1",),
                          kwargs={"timeout": BTC_FG_API_TIMEOUT}, max_attempts=2, default=None)
         if res is None:
             return {"value": 50, "label": "Unknown", "msg": "⚪ 중립(50)"}
-        data  = res.json()["data"][0]
+        data = res.json()["data"][0]
         value = int(data["value"])
         label = data["value_classification"]
         if value <= 25:
@@ -385,15 +395,17 @@ def get_fear_greed() -> dict:
         return {"value": 50, "label": "Unknown", "msg": "⚪ 중립(50)"}
 
 # ── 1시간봉 추세 ──────────────────────────────────
+
+
 def get_hourly_trend() -> dict:
     try:
-        df    = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=50)
-        from ta.trend import EMAIndicator
+        df = pyupbit.get_ohlcv("KRW-BTC", interval="minute60", count=50)
         from ta.momentum import RSIIndicator
+        from ta.trend import EMAIndicator
         close = df["close"]
         ema20 = EMAIndicator(close, window=20).ema_indicator().iloc[-1]
         ema50 = EMAIndicator(close, window=50).ema_indicator().iloc[-1]
-        rsi   = RSIIndicator(close, window=14).rsi().iloc[-1]
+        rsi = RSIIndicator(close, window=14).rsi().iloc[-1]
         price = close.iloc[-1]
 
         if ema20 > ema50 and price > ema20:
@@ -408,6 +420,7 @@ def get_hourly_trend() -> dict:
     except Exception as e:
         log.warning(f"1시간봉 조회 실패: {e}")
         return {"trend": "UNKNOWN", "ema20": 0, "ema50": 0, "rsi_1h": 50}
+
 
 def get_kimchi_premium():
     try:
@@ -435,8 +448,10 @@ def get_kimchi_premium():
         log.warning(f"김치 프리미엄 조회 실패: {e}")
         return None
 
+
 # ── 일봉 모멘텀 분석 ─────────────────────────────
 _daily_momentum_cache: dict = {"data": None, "ts": 0.0}
+
 
 def get_daily_momentum() -> dict:
     """yfinance BTC-USD 일봉으로 RSI/BB/거래량/수익률 분석. TTL 1시간 캐시."""
@@ -455,7 +470,7 @@ def get_daily_momentum() -> dict:
         from ta.momentum import RSIIndicator
         from ta.volatility import BollingerBands
         rsi_w = int(_l5_params.get("rsi_window", 14))
-        bb_w  = int(_l5_params.get("bb_window", 20))
+        bb_w = int(_l5_params.get("bb_window", 20))
         rsi_d = RSIIndicator(close, window=rsi_w).rsi().iloc[-1]
         bb = BollingerBands(close, window=bb_w)
         bb_h, bb_l = bb.bollinger_hband().iloc[-1], bb.bollinger_lband().iloc[-1]
@@ -507,39 +522,39 @@ def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
     - 레짐 조정: RISK_ON +5 / RISK_OFF -10 / CRISIS -20
     """
     # F&G (낮을수록 매수 기회)
-    if fg_value <= 10:   fg_sc = 22
+    if fg_value <= 10: fg_sc = 22
     elif fg_value <= 20: fg_sc = 18
     elif fg_value <= 30: fg_sc = 13
     elif fg_value <= 45: fg_sc = 7
     elif fg_value <= 55: fg_sc = 3
-    else:                fg_sc = 0
+    else: fg_sc = 0
 
     # 일봉 RSI
-    if rsi_d <= 30:   rsi_sc = 20
-    elif rsi_d <= 38:  rsi_sc = 16
-    elif rsi_d <= 45:  rsi_sc = 12
-    elif rsi_d <= 55:  rsi_sc = 6
-    elif rsi_d <= 65:  rsi_sc = 2
-    else:              rsi_sc = 0
+    if rsi_d <= 30: rsi_sc = 20
+    elif rsi_d <= 38: rsi_sc = 16
+    elif rsi_d <= 45: rsi_sc = 12
+    elif rsi_d <= 55: rsi_sc = 6
+    elif rsi_d <= 65: rsi_sc = 2
+    else: rsi_sc = 0
 
     # BB 포지션
-    if bb_pct <= 10:   bb_sc = 12
+    if bb_pct <= 10: bb_sc = 12
     elif bb_pct <= 25: bb_sc = 9
     elif bb_pct <= 40: bb_sc = 6
     elif bb_pct <= 55: bb_sc = 2
-    else:              bb_sc = 0
+    else: bb_sc = 0
 
     # 일봉 거래량
-    if vol_ratio_d >= 2.0:   vol_sc = 10
+    if vol_ratio_d >= 2.0: vol_sc = 10
     elif vol_ratio_d >= 1.5: vol_sc = 8
     elif vol_ratio_d >= 1.0: vol_sc = 5
     elif vol_ratio_d >= 0.6: vol_sc = 2
-    else:                    vol_sc = 0
+    else: vol_sc = 0
 
     # 추세
-    if trend == "UPTREND":    tr_sc = 12
+    if trend == "UPTREND": tr_sc = 12
     elif trend == "SIDEWAYS": tr_sc = 6
-    else:                     tr_sc = 0
+    else: tr_sc = 0
 
     # ── 온체인 신호 (신규) ──
 
@@ -585,13 +600,13 @@ def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
         oi_sc = -1  # OI 급등 = 변동성 주의
 
     # 뉴스 감정 (±8점)
-    if news_sentiment >= 0.8:    news_sc = 8
-    elif news_sentiment >= 0.5:  news_sc = 5
-    elif news_sentiment >= 0.2:  news_sc = 2
-    elif news_sentiment > -0.2:  news_sc = 0
-    elif news_sentiment > -0.5:  news_sc = -2
-    elif news_sentiment > -0.8:  news_sc = -5
-    else:                        news_sc = -8
+    if news_sentiment >= 0.8: news_sc = 8
+    elif news_sentiment >= 0.5: news_sc = 5
+    elif news_sentiment >= 0.2: news_sc = 2
+    elif news_sentiment > -0.2: news_sc = 0
+    elif news_sentiment > -0.5: news_sc = -2
+    elif news_sentiment > -0.8: news_sc = -5
+    else: news_sc = -8
 
     # 보너스
     bonus = 0
@@ -627,10 +642,10 @@ def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
 
     # ── 레짐 기반 실제 동적 조정 (v6.1) ──────────────
     _regime_bonus_map = {
-        "RISK_ON":    +5,   # 강세장: 진입 문턱 낮춤
-        "TRANSITION":  0,
-        "RISK_OFF":  -10,   # 약세장: 진입 억제
-        "CRISIS":    -20,   # 위기: 강력 억제
+        "RISK_ON": +5,   # 강세장: 진입 문턱 낮춤
+        "TRANSITION": 0,
+        "RISK_OFF": -10,   # 약세장: 진입 억제
+        "CRISIS": -20,   # 위기: 강력 억제
     }
     regime_adj = _regime_bonus_map.get(str(regime).upper(), 0)
 
@@ -674,13 +689,14 @@ def get_open_position():
         log.error(f"포지션 조회 실패: {e}")
         raise  # None 대신 예외를 그대로 전파 → 사이클 중단
 
+
 def open_position(entry_price, quantity, entry_krw) -> bool:
     row = {
         "entry_price": entry_price,
-        "entry_time":  datetime.now(timezone.utc).isoformat(),
-        "quantity":    quantity,
-        "entry_krw":   entry_krw,
-        "status":      "OPEN",
+        "entry_time": datetime.now(timezone.utc).isoformat(),
+        "quantity": quantity,
+        "entry_krw": entry_krw,
+        "status": "OPEN",
     }
     try:
         supabase.table("btc_position").insert({**row, "highest_price": entry_price}).execute()
@@ -757,6 +773,7 @@ def open_position_with_context(
         except Exception:
             return open_position(entry_price, quantity, entry_krw)
 
+
 def close_all_positions(exit_price):
     try:
         res = supabase.table("btc_position")\
@@ -767,34 +784,36 @@ def close_all_positions(exit_price):
             if _ep <= 0:
                 log.error(f"close_all_positions: entry_price 이상({_ep}) — pos id={pos.get('id')} 스킵")
                 continue
-            pnl     = (exit_price - _ep) * pos["quantity"]
+            pnl = (exit_price - _ep) * pos["quantity"]
             pnl_pct = (exit_price - _ep) / _ep * 100
             try:
                 supabase.table("btc_position").update({
-                    "status":     "CLOSED",
+                    "status": "CLOSED",
                     "exit_price": exit_price,
-                    "exit_time":  datetime.now(timezone.utc).isoformat(),
-                    "pnl":        round(pnl, 2),
-                    "pnl_pct":    round(pnl_pct, 2),
+                    "exit_time": datetime.now(timezone.utc).isoformat(),
+                    "pnl": round(pnl, 2),
+                    "pnl_pct": round(pnl_pct, 2),
                 }).eq("id", pos["id"]).execute()
             except Exception:
                 # pnl/pnl_pct 컬럼 미존재 시 최소 업데이트 (btc_position_schema.sql 실행 전 graceful fallback)
                 supabase.table("btc_position").update({
-                    "status":     "CLOSED",
+                    "status": "CLOSED",
                     "exit_price": exit_price,
-                    "exit_time":  datetime.now(timezone.utc).isoformat(),
+                    "exit_time": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", pos["id"]).execute()
     except Exception as e:
         log.error(f"포지션 종료 실패: {e}")
 
 # ── 일일 손실 한도 ────────────────────────────────
+
+
 def check_daily_loss() -> bool:
     # v6.2 B2: KST 시간대 통일 — 한국 기준 "오늘" 사용
     # P1-2: 전체 ISO datetime 사용 (날짜 문자열 비교 오차 방지)
     try:
         _KST = ZoneInfo("Asia/Seoul")
         today_start = datetime.now(_KST).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
-        res   = supabase.table("btc_position")\
+        res = supabase.table("btc_position")\
                         .select("pnl, entry_krw")\
                         .eq("status", "CLOSED")\
                         .gte("exit_time", today_start).execute()
@@ -813,6 +832,8 @@ def check_daily_loss() -> bool:
     return False
 
 # ── 룰 기반 BTC 신호 (LLM 대체, 결정론적) ─────────
+
+
 def rule_based_btc_signal(
     indicators,
     fg,
@@ -962,6 +983,13 @@ def rule_based_btc_signal(
             "confidence": min(score, 95),
             "reason": f"[룰] {' '.join(reasons[:5])}",
             "source": "RULE_BTC",
+            "decision_meta": {
+                "decision_source": "RULE",
+                "model": None,
+                "ai_latency_ms": None,
+                "prompt_tokens": None,
+                "response_tokens": None,
+            },
         }
 
     return {
@@ -969,7 +997,105 @@ def rule_based_btc_signal(
         "confidence": score,
         "reason": f"[룰] BUY 점수 {score}<65 ({' '.join(reasons[:3]) if reasons else 'no signal'})",
         "source": "RULE_BTC",
+        "decision_meta": {
+            "decision_source": "RULE",
+            "model": None,
+            "ai_latency_ms": None,
+            "prompt_tokens": None,
+            "response_tokens": None,
+        },
     }
+
+
+# ── Claude Haiku 호출 정책 (PR #25) ────────────────
+# timeout 5s + 1회 retry (timeout만), 401/429/parse/empty 즉시 룰 fallback.
+# cooldown 파일 mtime 기반 5분 (alert_manager 차용).
+# meta: decision_source / model / ai_latency_ms / prompt_tokens / response_tokens.
+_BTC_HAIKU_MODEL = "claude-haiku-4-5-20251001"
+_BTC_HAIKU_COOLDOWN_FILE = Path("/tmp/openclaw_btc_haiku_cooldown.ts")
+_BTC_HAIKU_COOLDOWN_SEC = 300
+_BTC_HAIKU_CLIENT = None
+
+
+def _btc_haiku_in_cooldown() -> bool:
+    if not _BTC_HAIKU_COOLDOWN_FILE.exists():
+        return False
+    import time as _t
+    return (_t.time() - _BTC_HAIKU_COOLDOWN_FILE.stat().st_mtime) < _BTC_HAIKU_COOLDOWN_SEC
+
+
+def _btc_haiku_set_cooldown(reason: str) -> None:
+    try:
+        _BTC_HAIKU_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _BTC_HAIKU_COOLDOWN_FILE.write_text(reason)
+    except Exception:
+        pass
+
+
+def _btc_haiku_get_client(timeout: float):
+    global _BTC_HAIKU_CLIENT
+    if _BTC_HAIKU_CLIENT is None:
+        import anthropic
+        _BTC_HAIKU_CLIENT = anthropic.Anthropic(timeout=timeout)
+    return _BTC_HAIKU_CLIENT
+
+
+def _call_btc_haiku(user_prompt: str, system_prompt: str, timeout: float = 5.0):
+    """Claude haiku-4-5 호출. (parsed_dict | None, meta) 반환."""
+    import time as _t
+
+    import anthropic
+    meta = {
+        "decision_source": "AI",
+        "model": _BTC_HAIKU_MODEL,
+        "ai_latency_ms": None,
+        "prompt_tokens": None,
+        "response_tokens": None,
+    }
+    if _btc_haiku_in_cooldown():
+        return None, {**meta, "decision_source": "RULE_COOLDOWN", "model": None}
+
+    for attempt in (1, 2):
+        try:
+            t0 = _t.monotonic()
+            client = _btc_haiku_get_client(timeout=timeout)
+            msg = client.messages.create(
+                model=_BTC_HAIKU_MODEL,
+                max_tokens=200,
+                temperature=0.1,
+                system=[{
+                    "type": "text", "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            meta["ai_latency_ms"] = int((_t.monotonic() - t0) * 1000)
+            usage = getattr(msg, "usage", None)
+            if usage is not None:
+                meta["prompt_tokens"] = getattr(usage, "input_tokens", None)
+                meta["response_tokens"] = getattr(usage, "output_tokens", None)
+            raw = (msg.content[0].text if msg.content else "").strip()
+            if not raw:
+                _btc_haiku_set_cooldown("EMPTY")
+                return None, meta
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            return json.loads(raw), meta
+        except anthropic.APITimeoutError:
+            if attempt == 1:
+                continue
+            return None, meta
+        except anthropic.AuthenticationError:
+            _btc_haiku_set_cooldown("AUTH_401")
+            return None, meta
+        except anthropic.RateLimitError:
+            _btc_haiku_set_cooldown("RATE_429")
+            return None, meta
+        except json.JSONDecodeError:
+            return None, meta
+        except Exception as e:
+            log.warning(f"BTC Claude 호출 실패: {e}")
+            return None, meta
+    return None, meta
 
 
 # ── AI 분석 ───────────────────────────────────────
@@ -989,10 +1115,10 @@ def analyze_with_ai(
 ) -> dict:
 
     trend_map = {
-        "UPTREND":   "📈 상승 추세 — 매수 우호적",
+        "UPTREND": "📈 상승 추세 — 매수 우호적",
         "DOWNTREND": "📉 하락 추세 — 매수 금지",
-        "SIDEWAYS":  "➡️ 횡보 — 신중 판단",
-        "UNKNOWN":   "❓ 불명확 — HOLD 우선",
+        "SIDEWAYS": "➡️ 횡보 — 신중 판단",
+        "UNKNOWN": "❓ 불명확 — HOLD 우선",
     }
 
     if volume["ratio"] >= 2.0:
@@ -1004,9 +1130,9 @@ def analyze_with_ai(
     else:
         vol_comment = f"➡️ 거래량 보통({volume['ratio']}배)"
 
-    mom  = momentum or {}
+    mom = momentum or {}
     fund = funding or {}
-    ls   = ls_ratio or {}
+    ls = ls_ratio or {}
     comp_total = (comp or {}).get("total", 0)
 
     system_prompt = """당신은 비트코인 퀀트 트레이더입니다.
@@ -1072,17 +1198,23 @@ RSI: {rsi_d:.1f} | BB%: {mom.get('bb_pct', 50):.1f}% | 7일수익: {mom.get('ret
         log.debug(f"BTC AI 캐시 히트: {cache_key}")
         return cached
 
-    try:
-        raw = call_haiku(user_prompt, system=system_prompt, max_tokens=200, temperature=0.1)
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw)
-        set_cached(cache_key, result, ttl=BTC_AI_CACHE_TTL)
-        return result
-    except Exception as e:
-        log.warning(f"AI 분석 실패: {e}")
-        return {"action": "HOLD", "confidence": 0, "reason": "AI 오류"}
+    parsed, meta = _call_btc_haiku(user_prompt, system_prompt)
+    if parsed is not None:
+        parsed["decision_meta"] = meta
+        set_cached(cache_key, parsed, ttl=BTC_AI_CACHE_TTL)
+        return parsed
+    # Claude 실패 → HOLD with meta. (DEPRECATED 함수이므로 호출 0건이지만 정합성 유지)
+    return {
+        "action": "HOLD",
+        "confidence": 0,
+        "reason": "AI 호출 실패",
+        "source": "AI_FAIL",
+        "decision_meta": meta,
+    }
 
 # ── 분할 매수 단계 (복합 스코어 기반) ─────────────
+
+
 def get_split_stage(composite_total: float) -> int:
     """복합 스코어가 높을수록 큰 비중으로 매수."""
     if composite_total >= 70: return 3
@@ -1090,6 +1222,8 @@ def get_split_stage(composite_total: float) -> int:
     return 1
 
 # ── 주문 실행 ─────────────────────────────────────
+
+
 def execute_trade(
     signal,
     indicators,
@@ -1145,7 +1279,7 @@ def execute_trade(
     except Exception:
         log.error("포지션 조회 실패 — 사이클 스킵")
         return {"result": "DB_ERROR"}
-    price       = indicators["price"]
+    price = indicators["price"]
 
     if btc_balance > 0.00001 and not pos:
         log.warning(
@@ -1290,7 +1424,7 @@ def execute_trade(
     # ── 분할 매수 ──
     if signal["action"] == "BUY":
         comp_total = comp["total"] if comp else 50
-        stage      = get_split_stage(comp_total)
+        stage = get_split_stage(comp_total)
         invest_krw = krw_balance * RISK["split_ratios"][stage - 1]
 
         target_market_weight = get_effective_market_weight('BTC')
@@ -1360,7 +1494,7 @@ def execute_trade(
             result = _execute_buy(invest_krw)
             if result is None:
                 return {"result": "ORDER_FAILED", "reason": "Upbit API 실패"}
-            qty    = float(result.get("executed_volume", 0)) or (invest_krw / price)
+            qty = float(result.get("executed_volume", 0)) or (invest_krw / price)
             # ATR 기반 손절가 계산 (진입 시점 ATR * 배수만큼 하락 시 손절)
             atr_val = indicators.get("atr", 0)
             atr_stop = round(price - atr_val * RISK["atr_multiplier"]) if atr_val else None
@@ -1405,7 +1539,7 @@ def execute_trade(
         sl_price = atr_stop_est or int(price * (1 + RISK["stop_loss"]))
         tp1_price = int(price * (1 + RISK.get("partial_tp_pct", 0.08)))
         tp2_price = int(price * (1 + RISK.get("partial_tp_2_pct", 0.12)))
-        tp_price  = int(price * (1 + RISK["take_profit"]))
+        tp_price = int(price * (1 + RISK["take_profit"]))
         comp_total = comp["total"] if comp else 0
         btc_val = int(price * qty_est)
         krw_remain = max(0, int(krw_balance - invest_krw))
@@ -1439,7 +1573,8 @@ def execute_trade(
                 log.debug(f"Sheets 매수 기록 실패: {e}")
         # audit fix: Prometheus 메트릭 연동
         try:
-            from common.prometheus_metrics import record_trade, set_signal_score
+            from common.prometheus_metrics import (record_trade,
+                                                   set_signal_score)
             record_trade("BTC", "buy")
             set_signal_score("BTC", "composite", float((comp or {}).get("total", 0) if isinstance(comp, dict) else 0))
         except Exception as e:
@@ -1479,37 +1614,45 @@ def execute_trade(
     return {"result": "HOLD"}
 
 # ── Supabase 로그 ─────────────────────────────────
+
+
 def save_log(indicators, signal, result, *, fg=None, volume=None, comp=None, funding=None, oi=None, ls_ratio=None, kimchi=None, market_regime=None) -> None:
     try:
         row = {
-            "timestamp":          datetime.now(timezone.utc).isoformat(),
-            "action":             signal.get("action", "HOLD"),
-            "price":              indicators["price"],
-            "rsi":                indicators["rsi"],
-            "macd":               indicators["macd"],
-            "confidence":         signal.get("confidence", 0),
-            "reason":             signal.get("reason", ""),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": signal.get("action", "HOLD"),
+            "price": indicators["price"],
+            "rsi": indicators["rsi"],
+            "macd": indicators["macd"],
+            "confidence": signal.get("confidence", 0),
+            "reason": signal.get("reason", ""),
             "indicator_snapshot": json.dumps(indicators),
-            "order_raw":          json.dumps(result),
+            "order_raw": json.dumps(result),
             # --- Optional signal context (safe if schema supports it) ---
-            "fg_value":           (fg or {}).get("value") if fg else None,
-            "bb_pct":             (comp or {}).get("bb_pct") if isinstance(comp, dict) else None,
-            "vol_ratio_5m":       (volume or {}).get("ratio") if volume else None,
-            "trend":              (comp or {}).get("trend") if isinstance(comp, dict) else None,
-            "funding_rate":       (funding or {}).get("rate") if funding else None,
-            "oi_ratio":           (oi or {}).get("ratio") if oi else None,
-            "ls_ratio":           (ls_ratio or {}).get("ls_ratio") if ls_ratio else None,
-            "kimchi":             kimchi,
-            "market_regime":      market_regime,
-            "composite_score":    (comp or {}).get("total") if isinstance(comp, dict) else None,
+            "fg_value": (fg or {}).get("value") if fg else None,
+            "bb_pct": (comp or {}).get("bb_pct") if isinstance(comp, dict) else None,
+            "vol_ratio_5m": (volume or {}).get("ratio") if volume else None,
+            "trend": (comp or {}).get("trend") if isinstance(comp, dict) else None,
+            "funding_rate": (funding or {}).get("rate") if funding else None,
+            "oi_ratio": (oi or {}).get("ratio") if oi else None,
+            "ls_ratio": (ls_ratio or {}).get("ls_ratio") if ls_ratio else None,
+            "kimchi": kimchi,
+            "market_regime": market_regime,
+            "composite_score": (comp or {}).get("total") if isinstance(comp, dict) else None,
             # v6.3: 시그널 소스 추적 (attribution용)
-            "signal_source":      signal.get("source", "UNKNOWN"),
+            "signal_source": signal.get("source", "UNKNOWN"),
+            # PR #25: AI 결정 메타데이터 (PR #29 Performance Layer 대비)
+            "decision_source": signal.get("decision_meta", {}).get("decision_source"),
+            "model": signal.get("decision_meta", {}).get("model"),
+            "ai_latency_ms": signal.get("decision_meta", {}).get("ai_latency_ms"),
+            "prompt_tokens": signal.get("decision_meta", {}).get("prompt_tokens"),
+            "response_tokens": signal.get("decision_meta", {}).get("response_tokens"),
         }
 
         try:
             supabase.table("btc_trades").insert(row).execute()
         except Exception:
-            # Fallback to minimal schema
+            # Fallback to minimal schema (PR #25 메타 컬럼 schema 미적용 시 graceful degrade)
             minimal = {k: row[k] for k in [
                 "timestamp", "action", "price", "rsi", "macd",
                 "confidence", "reason", "indicator_snapshot", "order_raw",
@@ -1520,6 +1663,8 @@ def save_log(indicators, signal, result, *, fg=None, volume=None, comp=None, fun
         log.error(f"Supabase 저장 실패: {e}")
 
 # ── 메인 사이클 ───────────────────────────────────
+
+
 def run_trading_cycle() -> dict:
     global _btc_buy_blocked
     # P1-1: DrawdownGuard가 설정한 _btc_buy_blocked 값을 사이클 간 유지해야 함
@@ -1649,34 +1794,34 @@ def run_trading_cycle() -> dict:
 
     log.info("매매 사이클 시작")
 
-    df         = get_market_data()
+    df = get_market_data()
     if not _market_data_ready(df):
         log.warning("시장 데이터 조회 실패 또는 비정상 응답 — 사이클 스킵 | guard=market_data_unavailable, result=MARKET_DATA_UNAVAILABLE")
         return {"result": "MARKET_DATA_UNAVAILABLE"}
     indicators = calculate_indicators(df)
-    volume     = get_volume_analysis(df)
-    fg         = get_fear_greed()
-    htf        = get_hourly_trend()
-    momentum   = get_daily_momentum()
-    news       = _get_news_result()
-    pos        = get_open_position()
-    kimchi     = get_kimchi_premium()
+    volume = get_volume_analysis(df)
+    fg = get_fear_greed()
+    htf = get_hourly_trend()
+    momentum = get_daily_momentum()
+    news = _get_news_result()
+    pos = get_open_position()
+    kimchi = get_kimchi_premium()
 
     # ── 온체인 데이터 (v6 신규) ──
-    from common.market_data import (
-        get_btc_funding_rate, get_btc_open_interest,
-        get_btc_long_short_ratio, get_btc_whale_activity,
-        get_market_regime,
-    )
-    funding  = get_btc_funding_rate()
-    oi       = get_btc_open_interest()
+    from common.market_data import (get_btc_funding_rate,
+                                    get_btc_long_short_ratio,
+                                    get_btc_open_interest,
+                                    get_btc_whale_activity, get_market_regime)
+    funding = get_btc_funding_rate()
+    oi = get_btc_open_interest()
     ls_ratio = get_btc_long_short_ratio()
-    whale    = get_btc_whale_activity()
+    whale = get_btc_whale_activity()
 
     # ── 고래 시그널 분류 (기존 whale 데이터 재사용, 추가 API 호출 없음) ──
     whale_signal: dict = {}
     try:
-        from btc.signals.whale_tracker import classify_whale_activity as _classify_whale
+        from btc.signals.whale_tracker import \
+            classify_whale_activity as _classify_whale
         _unc = float((whale or {}).get("unconfirmed_tx") or 0)
         if _unc > 0:
             _bl = max(_unc * 0.010, 1.0)
@@ -1697,8 +1842,8 @@ def run_trading_cycle() -> dict:
         market_regime = "TRANSITION"
 
     fg_value = fg["value"]
-    rsi_5m   = indicators["rsi"]
-    rsi_d    = momentum["rsi_d"]
+    rsi_5m = indicators["rsi"]
+    rsi_d = momentum["rsi_d"]
 
     comp = calc_btc_composite(
         fg_value, rsi_d, momentum["bb_pct"],
@@ -1958,13 +2103,15 @@ def run_trading_cycle() -> dict:
 
     # audit fix: Prometheus 메트릭 연동
     try:
-        from common.prometheus_metrics import record_agent_cycle, set_signal_score
+        from common.prometheus_metrics import (record_agent_cycle,
+                                               set_signal_score)
         record_agent_cycle("BTC", "success")
         set_signal_score("BTC", "composite", float((comp or {}).get("total", 0) if isinstance(comp, dict) else 0))
     except Exception as e:
         log.debug(f"Prometheus 사이클 메트릭 기록 실패: {e}")
 
     return result
+
 
 def build_hourly_summary() -> str:
     """매시 요약 텍스트 생성 (가격·포지션·오늘 손익·F&G·1시간봉 추세)."""
@@ -2001,6 +2148,7 @@ def build_hourly_summary() -> str:
         return msg
     except Exception as e:
         return f"⏰ BTC 매시 요약 생성 실패: {e}"
+
 
 def send_hourly_report():
     """매시 정각 요약 — INFO 버퍼에 저장 (일일 리포트에 병합됨)."""
