@@ -834,7 +834,47 @@ def check_daily_loss() -> bool:
 # ── 룰 기반 BTC 신호 (LLM 대체, 결정론적) ─────────
 
 
-def rule_based_btc_signal(
+def _rule_meta() -> dict:
+    """rule_based_btc_signal 모든 return decision_meta 통일 헬퍼 (PR #25 hotfix)."""
+    return {
+        "decision_source": "RULE",
+        "model": None,
+        "ai_latency_ms": None,
+        "prompt_tokens": None,
+        "response_tokens": None,
+    }
+
+
+def _map_signal_source(src):
+    """signal["source"] → btc_trades.signal_source check constraint 통과 매핑 (PR #25 hotfix).
+
+    btc_trades.signal_source check: NULL or one of rule/ml/llm/composite/manual.
+    """
+    if not src:
+        return None
+    s = str(src).upper()
+    if s.startswith("RULE") or s == "AI_FAIL":
+        return "rule"
+    if s in ("AI", "LLM"):
+        return "llm"
+    if s == "ML":
+        return "ml"
+    if s == "MANUAL":
+        return "manual"
+    if s == "COMPOSITE":
+        return "composite"
+    return None
+
+
+def rule_based_btc_signal(*args, **kwargs):
+    """Wrapper — 모든 return path에 decision_meta 동봉 보장 (PR #25 hotfix)."""
+    result = _rule_based_btc_signal_impl(*args, **kwargs)
+    if isinstance(result, dict):
+        result.setdefault("decision_meta", _rule_meta())
+    return result
+
+
+def _rule_based_btc_signal_impl(
     indicators,
     fg,
     htf,
@@ -889,6 +929,7 @@ def rule_based_btc_signal(
             "confidence": 75,
             "reason": f"[룰] DOWNTREND + 5m RSI {rsi_5m:.0f}>=65",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
     if fg_val >= 75:
         return {
@@ -896,6 +937,7 @@ def rule_based_btc_signal(
             "confidence": 75,
             "reason": f"[룰] 극도탐욕 F&G={fg_val}>=75",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
     if rsi_d >= 70 and bb_pct >= 80:
         return {
@@ -903,6 +945,7 @@ def rule_based_btc_signal(
             "confidence": 75,
             "reason": f"[룰] 과매수 dRSI={rsi_d:.0f} + BB%={bb_pct:.0f}",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
 
     # ── BUY 필수 조건 ──
@@ -914,6 +957,7 @@ def rule_based_btc_signal(
             "confidence": 0,
             "reason": f"[룰] DOWNTREND — BUY 금지",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
     # 필수 2: 공포 구간
     if fg_val > 55:
@@ -922,6 +966,7 @@ def rule_based_btc_signal(
             "confidence": 0,
             "reason": f"[룰] F&G {fg_val}>55 — BUY 구간 아님",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
     # 필수 3: 거래량 (극도공포 면제)
     min_vol = 0.15 if is_extreme_fear else 0.3
@@ -931,6 +976,7 @@ def rule_based_btc_signal(
             "confidence": 0,
             "reason": f"[룰] 거래량 {vol_ratio:.2f}x<={min_vol} — BUY 금지",
             "source": "RULE_BTC",
+            "decision_meta": _rule_meta(),
         }
 
     # ── BUY 점수 합산 ──
@@ -1639,8 +1685,8 @@ def save_log(indicators, signal, result, *, fg=None, volume=None, comp=None, fun
             "kimchi": kimchi,
             "market_regime": market_regime,
             "composite_score": (comp or {}).get("total") if isinstance(comp, dict) else None,
-            # v6.3: 시그널 소스 추적 (attribution용)
-            "signal_source": signal.get("source", "UNKNOWN"),
+            # v6.3: 시그널 소스 추적 (attribution용) — PR #25 hotfix: check constraint 매핑
+            "signal_source": _map_signal_source(signal.get("source")),
             # PR #25: AI 결정 메타데이터 (PR #29 Performance Layer 대비)
             "decision_source": signal.get("decision_meta", {}).get("decision_source"),
             "model": signal.get("decision_meta", {}).get("model"),
@@ -1652,10 +1698,11 @@ def save_log(indicators, signal, result, *, fg=None, volume=None, comp=None, fun
         try:
             supabase.table("btc_trades").insert(row).execute()
         except Exception:
-            # Fallback to minimal schema (PR #25 메타 컬럼 schema 미적용 시 graceful degrade)
+            # Fallback to minimal schema + 메타 컬럼 보존 (PR #25 hotfix)
             minimal = {k: row[k] for k in [
                 "timestamp", "action", "price", "rsi", "macd",
                 "confidence", "reason", "indicator_snapshot", "order_raw",
+                "decision_source", "model", "ai_latency_ms", "prompt_tokens", "response_tokens",
             ]}
             supabase.table("btc_trades").insert(minimal).execute()
         log.debug("Supabase 저장 완료")
