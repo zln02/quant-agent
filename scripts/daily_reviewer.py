@@ -73,6 +73,51 @@ def _compress_btc_trades(rows: list[dict]) -> dict:
     }
 
 
+def _build_source_breakdown(rows: list[dict], key: str = "signal_source") -> dict:
+    """신호원별 분포 + 성과 (n / closed / win_rate / avg_pnl_pct). PR #29."""
+    breakdown: dict[str, dict] = {}
+    by_source: dict[str, list[dict]] = {}
+    for r in rows:
+        src = r.get(key) or "NULL"
+        by_source.setdefault(src, []).append(r)
+    for src, src_rows in by_source.items():
+        closed = [r for r in src_rows if r.get("pnl_pct") is not None]
+        wins = sum(1 for r in closed if float(r.get("pnl_pct") or 0) > 0)
+        breakdown[src] = {
+            "n": len(src_rows),
+            "closed": len(closed),
+            "win_rate": round(wins / len(closed), 3) if closed else None,
+            "avg_pnl_pct": (
+                round(sum(float(r.get("pnl_pct") or 0) for r in closed) / len(closed), 3)
+                if closed else None
+            ),
+        }
+    return breakdown
+
+
+def _build_decision_breakdown(rows: list[dict]) -> dict:
+    """BTC decision_source별 분포 + ai_latency_ms 평균 + 토큰 합산. PR #29."""
+    breakdown: dict[str, dict] = {}
+    by_decision: dict[str, list[dict]] = {}
+    for r in rows:
+        ds = r.get("decision_source") or "NULL"
+        by_decision.setdefault(ds, []).append(r)
+    for ds, ds_rows in by_decision.items():
+        latencies = [r.get("ai_latency_ms") for r in ds_rows if r.get("ai_latency_ms") is not None]
+        prompt_t = [r.get("prompt_tokens") for r in ds_rows if r.get("prompt_tokens") is not None]
+        resp_t = [r.get("response_tokens") for r in ds_rows if r.get("response_tokens") is not None]
+        breakdown[ds] = {
+            "n": len(ds_rows),
+            "avg_latency_ms": (
+                round(sum(latencies) / len(latencies), 1) if latencies else None
+            ),
+            "total_prompt_tokens": sum(prompt_t) if prompt_t else 0,
+            "total_response_tokens": sum(resp_t) if resp_t else 0,
+            "model": next((r.get("model") for r in ds_rows if r.get("model")), None),
+        }
+    return breakdown
+
+
 class DailyReviewer:
     """24h 윈도우 트레이딩 데이터를 Haiku로 분석해 4섹션 리뷰 생성."""
 
@@ -113,6 +158,7 @@ class DailyReviewer:
             "trade_count": len(rows),
             "type_dist": dict(types),
             "strategy_dist": dict(strategies),
+            "source_breakdown": _build_source_breakdown(rows, "signal_source"),
             "avg_pnl_pct": round(sum(pnl_pcts) / len(pnl_pcts), 3) if pnl_pcts else None,
             "samples": rows[:5] if len(rows) <= _COMPRESS_THRESHOLD else None,
         }
@@ -124,7 +170,7 @@ class DailyReviewer:
         if self.sb is not None:
             try:
                 r = self.sb.table("btc_trades").select(
-                    "action,reason,composite_score,signal_source,timestamp"
+                    "action,reason,composite_score,signal_source,decision_source,model,ai_latency_ms,prompt_tokens,response_tokens,timestamp"
                 ).gte("timestamp", since).order("timestamp").execute()
                 trades = r.data or []
             except Exception as exc:
@@ -149,6 +195,7 @@ class DailyReviewer:
                 round(sum(p.get("pnl_pct") or 0 for p in closed) / len(closed), 3)
                 if closed else None
             ),
+            "decision_breakdown": _build_decision_breakdown(trades),
         }
 
     def _us_section(self) -> dict:
@@ -168,6 +215,7 @@ class DailyReviewer:
             "trade_count": len(rows),
             "type_dist": dict(types),
             "source_dist": dict(sources),
+            "source_breakdown": _build_source_breakdown(rows, "signal_source"),
             "samples": rows[:5] if len(rows) <= _COMPRESS_THRESHOLD else None,
         }
 
@@ -212,7 +260,8 @@ class DailyReviewer:
         "당신은 OpenClaw 트레이딩 시스템의 데일리 리뷰어다. "
         "주어진 24h 데이터를 한국어 평문 4섹션으로 분석한다: "
         "(1) 매매 요약 (BUY/SELL/HOLD 비율, 실현 손익) "
-        "(2) 알고리즘 정합성 (룰 vs AI 결정 비율, 신호 다양성, fallback 비율) "
+        "(2) 알고리즘 정합성 — strategy/source 분포 + 신호원별(rule/ml/llm/composite 또는 AI/RULE) win_rate·avg_pnl_pct 비교. "
+        "source_breakdown 또는 decision_breakdown 딕셔너리가 ctx 에 있으면 그 신호원별 성과를 한 줄로 비교. "
         "(3) 위험 신호 (drawdown, ML drift PSI, equity 적재 정합) "
         "(4) 다음 24h 주의 사항. "
         "각 섹션 3줄 이내. 데이터가 없거나 측정 불가하면 '측정 불가' 명시. "

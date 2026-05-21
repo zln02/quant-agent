@@ -45,11 +45,23 @@ try:
         "Supabase query count",
         ["operation", "status"],
     )
+    AI_DECISION_TOTAL = Counter(
+        "openclaw_ai_decision_total",
+        "AI 결정 카운트 (LLM 호출 기반)",
+        ["market", "action"],
+    )
+    RULE_DECISION_TOTAL = Counter(
+        "openclaw_rule_decision_total",
+        "RULE 결정 카운트 (algorithmic/heuristic)",
+        ["market", "action"],
+    )
 
     _ENABLED = True
 
 except ImportError:
     _ENABLED = False
+    AI_DECISION_TOTAL = None  # type: ignore[assignment]
+    RULE_DECISION_TOTAL = None  # type: ignore[assignment]
 
 
 def record_trade(market: str, side: str) -> None:
@@ -92,3 +104,22 @@ def record_supabase_query(operation: str, status: str = "ok") -> None:
     """Supabase 쿼리 카운터 증가."""
     if _ENABLED:
         SUPABASE_QUERY.labels(operation=operation, status=status).inc()
+
+
+def record_decision_source(market: str, source: str | None, action: str) -> None:
+    """매매 결정 시 AI/RULE 분기 Counter 증가 (PR #29).
+
+    매매 사이클 hot path 에서 호출. source 는 signal_source 또는 decision_source.
+    분류: AI/LLM/ML/COMPOSITE/ML_MULTI_HORIZON → AI counter, RULE_*/manual/None → RULE counter.
+    """
+    if not _ENABLED:
+        return
+    try:
+        s = (source or "RULE").upper()
+        is_rule = s.startswith("RULE") or s in ("MANUAL", "")
+        if is_rule:
+            RULE_DECISION_TOTAL.labels(market=market, action=action).inc()
+        else:
+            AI_DECISION_TOTAL.labels(market=market, action=action).inc()
+    except Exception:
+        pass

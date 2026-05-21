@@ -1622,6 +1622,13 @@ def execute_buy(
             log(f'{name} DB 저장 2차 실패: {e2}', 'ERROR')
             send_telegram(f'🚨 {name} 매수 체결됐으나 DB 저장 실패 — 수동 확인 필요\n코드: {code}')
 
+    # PR #29: AI/RULE 결정 Prometheus 카운터 (BUY 시점, fire-and-forget)
+    try:
+        from common.prometheus_metrics import record_decision_source
+        record_decision_source("kr", signal.get("source"), "BUY")
+    except Exception:
+        pass
+
     if notify_openclaw:
         try:
             notify_openclaw("kr_buy", f"KR 매수: {name}", metadata={"stock": name, "price": price})

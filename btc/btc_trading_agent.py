@@ -1709,6 +1709,17 @@ def save_log(indicators, signal, result, *, fg=None, volume=None, comp=None, fun
     except Exception as e:
         log.error(f"Supabase 저장 실패: {e}")
 
+    # PR #29: AI/RULE 결정 Prometheus 카운터 (fire-and-forget)
+    try:
+        from common.prometheus_metrics import record_decision_source
+        record_decision_source(
+            "btc",
+            signal.get("decision_meta", {}).get("decision_source"),
+            signal.get("action", "HOLD"),
+        )
+    except Exception:
+        pass
+
 # ── 메인 사이클 ───────────────────────────────────
 
 
