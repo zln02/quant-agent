@@ -7,7 +7,9 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from scripts.daily_reviewer import DailyReviewer, _compress_btc_trades
+from scripts.daily_reviewer import (DailyReviewer, _build_decision_breakdown,
+                                    _build_source_breakdown,
+                                    _compress_btc_trades)
 
 
 class CompressTrades(unittest.TestCase):
@@ -135,6 +137,48 @@ class RunIntegration(unittest.TestCase):
             result = rv.run()
         self.assertEqual(result["status"], "empty_review")
         sender.assert_not_called()
+
+
+class SourceBreakdown(unittest.TestCase):
+    """PR #29: signal_source 별 분포 + win_rate/avg_pnl_pct 집계."""
+
+    def test_empty_rows_returns_empty(self) -> None:
+        self.assertEqual(_build_source_breakdown([]), {})
+
+    def test_signal_source_split_with_win_rate(self) -> None:
+        rows = [
+            {"signal_source": "rule", "pnl_pct": 1.5},   # win
+            {"signal_source": "rule", "pnl_pct": -0.5},  # loss
+            {"signal_source": "rule", "pnl_pct": None},  # open
+            {"signal_source": "ml", "pnl_pct": 2.0},     # win
+            {"signal_source": None, "pnl_pct": 0.0},     # neutral → NULL bucket
+        ]
+        out = _build_source_breakdown(rows)
+        self.assertEqual(out["rule"]["n"], 3)
+        self.assertEqual(out["rule"]["closed"], 2)
+        self.assertEqual(out["rule"]["win_rate"], 0.5)
+        self.assertEqual(out["rule"]["avg_pnl_pct"], 0.5)
+        self.assertEqual(out["ml"]["n"], 1)
+        self.assertEqual(out["ml"]["win_rate"], 1.0)
+        self.assertIn("NULL", out)
+
+    def test_decision_breakdown_latency_avg_and_tokens(self) -> None:
+        rows = [
+            {"decision_source": "AI", "ai_latency_ms": 1200, "prompt_tokens": 100,
+             "response_tokens": 50, "model": "claude-haiku-4-5-20251001"},
+            {"decision_source": "AI", "ai_latency_ms": 800, "prompt_tokens": 120,
+             "response_tokens": 60, "model": "claude-haiku-4-5-20251001"},
+            {"decision_source": "RULE", "ai_latency_ms": None, "prompt_tokens": None,
+             "response_tokens": None, "model": None},
+        ]
+        out = _build_decision_breakdown(rows)
+        self.assertEqual(out["AI"]["n"], 2)
+        self.assertEqual(out["AI"]["avg_latency_ms"], 1000.0)
+        self.assertEqual(out["AI"]["total_prompt_tokens"], 220)
+        self.assertEqual(out["AI"]["total_response_tokens"], 110)
+        self.assertEqual(out["AI"]["model"], "claude-haiku-4-5-20251001")
+        self.assertEqual(out["RULE"]["n"], 1)
+        self.assertIsNone(out["RULE"]["avg_latency_ms"])
 
 
 if __name__ == "__main__":
