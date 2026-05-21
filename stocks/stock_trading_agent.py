@@ -1776,6 +1776,14 @@ def execute_sell(stock: dict, signal: dict, indicators: dict, reason_prefix: str
     except Exception as e:
         log(f'{name} 매도 기록 저장 실패: {e}', 'ERROR')
 
+    # PR #29 후속: KR SELL 시점 AI/RULE 결정 Prometheus 카운터 (fire-and-forget)
+    try:
+        from common.prometheus_metrics import record_decision_source
+        _src = signal.get("source") if isinstance(signal, dict) else None
+        record_decision_source("kr", _src, "SELL")
+    except Exception:
+        pass
+
     if notify_openclaw:
         try:
             notify_openclaw("kr_sell", f"KR 매도: {name}", metadata={"stock": name, "price": price})
