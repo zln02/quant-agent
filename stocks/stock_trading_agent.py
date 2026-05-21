@@ -10,32 +10,29 @@ v3 변경사항:
 - [IMPROVE] 복합 스코어에 재무 품질 15점 추가
 """
 
-import os
 import json
-import time
+import os
 import sys
-import requests
+import time
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo  # v6.2 B2: KST 시간대 통일
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo  # v6.2 B2: KST 시간대 통일
+
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.env_loader import load_env
-from common.telegram import send_telegram as _tg_send
-from common.supabase_client import get_supabase
-from common.logger import get_logger
-from common.retry import retry, retry_call
 from common.config import STOCK_TRADING_LOG
-from common.utils import generate_order_id, check_order_idempotency
+from common.env_loader import load_env
+from common.equity_loader import (append_equity_snapshot,
+                                  get_effective_market_weight,
+                                  load_equity_curve, load_recent_trades,
+                                  save_drawdown_state)
 from common.llm_client import call_haiku, is_quota_exceeded
-from common.equity_loader import (
-    append_equity_snapshot,
-    get_effective_market_weight,
-    load_equity_curve,
-    load_recent_trades,
-    save_drawdown_state,
-)
+from common.logger import get_logger
+from common.supabase_client import get_supabase
+from common.telegram import send_telegram as _tg_send
+from common.utils import check_order_idempotency, generate_order_id
 from execution.smart_router import SmartRouter
 from quant.drift_detector import ConceptDriftDetector  # v6.2 C3: 드리프트 감지
 from quant.risk.drawdown_guard import DrawdownGuard
@@ -149,6 +146,20 @@ def _apply_kr_drift_gate(signal: dict) -> dict:
     base_conf = float(adjusted.get('confidence', 0.0) or 0.0)
     reason = str(adjusted.get('reason', ''))
 
+    # 룰 단독 시그널은 ML drift 무관 — pass-through (drift 메타만 표시).
+    # 호출처 line 1218 의 base_signal 은 _rule_w=1.0, _ml_w=0.0 으로 룰 100% (audit fix 후).
+    # ML drift 가 룰 결과까지 차단하던 버그 해소.
+    src = str(adjusted.get('source', ''))
+    if src.startswith('RULE'):
+        adjusted['drift_status'] = status
+        adjusted['drift_penalty'] = 0.0
+        adjusted['ml_score'] = 0.0
+        if status in ('WARNING', 'DANGER'):
+            adjusted['reason'] = (
+                reason + f' [KR_ML_DRIFT_{status}:RULE_PASS psi={max_psi:.2f}]'
+            ).strip()
+        return adjusted
+
     if status == 'WARNING':
         adjusted['confidence'] = max(0.0, round(base_conf - 8.0, 1))
         adjusted['reason'] = (reason + f' [KR_ML_DRIFT:WARNING psi={max_psi:.2f}]').strip()
@@ -187,6 +198,7 @@ def _get_kr_atr_pct(code: str, period: int = 14) -> float:
     """KR 종목 ATR%를 kiwoom 일봉 데이터로 계산. 실패 시 0.0."""
     try:
         import yfinance as yf
+
         # KR 종목은 yfinance에서 {code}.KS 형식
         suffix = ".KS" if not code.endswith((".KS", ".KQ")) else ""
         ticker = yf.Ticker(f"{code}{suffix}")
@@ -213,11 +225,9 @@ def _get_kr_atr_pct(code: str, period: int = 14) -> float:
 
 def _get_kr_dynamic_sl_tp(code: str) -> tuple:
     """KR ATR 기반 동적 SL/TP. (sl_pct, tp_pct) 반환 (sl은 음수)."""
-    from common.config import (
-        ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER,
-        ATR_MIN_STOP_LOSS, ATR_MAX_STOP_LOSS,
-        ATR_MIN_TAKE_PROFIT, ATR_MAX_TAKE_PROFIT,
-    )
+    from common.config import (ATR_MAX_STOP_LOSS, ATR_MAX_TAKE_PROFIT,
+                               ATR_MIN_STOP_LOSS, ATR_MIN_TAKE_PROFIT,
+                               ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER)
     atr_pct = _get_kr_atr_pct(code)
     if atr_pct <= 0:
         return RISK["stop_loss"], RISK["take_profit"]
@@ -1143,7 +1153,8 @@ def get_trading_signal(
     _current_kr_regime = "TRANSITION"
     _regime_ml_mult = 1.0
     try:
-        from agents.regime_classifier import get_regime_cached as _get_regime_cached
+        from agents.regime_classifier import \
+            get_regime_cached as _get_regime_cached
         _kr_regime_adj = _get_regime_cached(1800)
         _current_kr_regime = _kr_regime_adj.get("regime", "TRANSITION")
         # 레짐별 ML 신호 가중치: RISK_OFF/CRISIS 시 ML 고확률 기준 상향
@@ -1158,7 +1169,7 @@ def get_trading_signal(
 
     # ML 신호 항상 수집
     try:
-        from ml_model import get_ml_signal, MODEL_DIR  # 같은 디렉토리
+        from ml_model import MODEL_DIR, get_ml_signal  # 같은 디렉토리
         if MODEL_DIR.exists():
             ml = get_ml_signal(stock['code'])
             ml_confidence = float(ml.get('confidence', 0))
@@ -1571,7 +1582,10 @@ def execute_buy(
 
     # ML 피처 벡터 저장 (look-ahead bias 방지: 매수 시점 피처를 DB에 저장)
     try:
-        from ml_model import predict_stock as _predict_stock, FEATURE_NAMES as _FEATURE_NAMES
+        from ml_model import \
+            FEATURE_NAMES as \
+            _FEATURE_NAMES  # noqa: F401 — reserved for ML feature dim validation
+        from ml_model import predict_stock as _predict_stock
         _ml_pred = _predict_stock(code, horizon_key='3d')
         if 'features' in _ml_pred:
             insert_data['ml_features_json'] = json.dumps(_ml_pred['features'], ensure_ascii=False)
@@ -1584,7 +1598,7 @@ def execute_buy(
         _WORKSPACE_PATH = str(Path(__file__).resolve().parents[1])
         if _WORKSPACE_PATH not in _sys.path:
             _sys.path.insert(0, _WORKSPACE_PATH)
-        from quant.factors.registry import calc_all, FactorContext
+        from quant.factors.registry import FactorContext, calc_all
         _fctx = FactorContext()
         _today_iso = datetime.now().date().isoformat()
         _all_factors = calc_all(_today_iso, symbol=code, market='kr', context=_fctx)
