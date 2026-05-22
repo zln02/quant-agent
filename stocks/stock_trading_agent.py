@@ -1581,14 +1581,24 @@ def execute_buy(
     }
 
     # ML 피처 벡터 저장 (look-ahead bias 방지: 매수 시점 피처를 DB에 저장)
+    # PR #20: predict_stock transient 실패 시 retry 1회 추가 (retrain_from_live_trades 라이브 샘플 누적 보장)
     try:
+        import time as _time
+
         from ml_model import \
             FEATURE_NAMES as \
             _FEATURE_NAMES  # noqa: F401 — reserved for ML feature dim validation
         from ml_model import predict_stock as _predict_stock
         _ml_pred = _predict_stock(code, horizon_key='3d')
+        if 'features' not in _ml_pred:
+            # 모델/데이터 transient 실패 (timeout, daily_ohlcv lag 등) — 0.5s 후 1회 retry
+            log(f'{name} predict_stock 1차 실패 (error={_ml_pred.get("error", "?")}) → 0.5s 후 retry', 'INFO')
+            _time.sleep(0.5)
+            _ml_pred = _predict_stock(code, horizon_key='3d')
         if 'features' in _ml_pred:
             insert_data['ml_features_json'] = json.dumps(_ml_pred['features'], ensure_ascii=False)
+        else:
+            log(f'{name} ml_features_json NULL (retry 후에도 error={_ml_pred.get("error", "?")})', 'WARN')
     except Exception as _mfe:
         log(f'{name} ML 피처 저장 건너뜀: {_mfe}', 'WARN')
 
