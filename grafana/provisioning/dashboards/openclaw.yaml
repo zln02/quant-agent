@@ -1,0 +1,14 @@
+# Grafana dashboard file provider (PR #21)
+# /var/lib/grafana/dashboards/ 디렉토리의 JSON 파일 자동 import.
+apiVersion: 1
+providers:
+  - name: openclaw
+    orgId: 1
+    folder: OpenClaw
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,13 @@
+# Grafana datasource provisioning (PR #21)
+# 기존 manual 설정 datasource 와 충돌 방지: 별도 이름 'openclaw-prometheus'
+apiVersion: 1
+datasources:
+  - name: openclaw-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 30s
+      httpMethod: POST
