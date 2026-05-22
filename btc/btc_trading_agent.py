@@ -425,15 +425,15 @@ def get_hourly_trend() -> dict:
 def get_kimchi_premium():
     try:
         binance = retry_call(requests.get,
-            args=("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",),
-            kwargs={"timeout": 3}, max_attempts=2, default=None)
+                             args=("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",),
+                             kwargs={"timeout": 3}, max_attempts=2, default=None)
         if binance is None:
             return None
         binance = binance.json()
         binance_price = float(binance["price"])
         usdt = retry_call(requests.get,
-            args=("https://api.upbit.com/v1/ticker?markets=KRW-USDT",),
-            kwargs={"timeout": 3}, max_attempts=2, default=None)
+                          args=("https://api.upbit.com/v1/ticker?markets=KRW-USDT",),
+                          kwargs={"timeout": 3}, max_attempts=2, default=None)
         if usdt is None:
             return None
         usdt = usdt.json()
@@ -498,10 +498,10 @@ def get_daily_momentum() -> dict:
 
 # ── BTC 복합 스코어 (v6 — 온체인 + 동적 가중치) ──
 def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
-                        funding=None, oi=None, ls_ratio=None, kimchi=None,
-                        regime: str = "TRANSITION",
-                        news_sentiment: float = 0.0,
-                        whale=None):
+                       funding=None, oi=None, ls_ratio=None, kimchi=None,
+                       regime: str = "TRANSITION",
+                       news_sentiment: float = 0.0,
+                       whale=None):
     """
     BTC 매수 복합 스코어 (0~100).
     v6: 온체인 데이터(펀딩비, OI, 롱숏비율) 추가.
@@ -522,39 +522,64 @@ def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
     - 레짐 조정: RISK_ON +5 / RISK_OFF -10 / CRISIS -20
     """
     # F&G (낮을수록 매수 기회)
-    if fg_value <= 10: fg_sc = 22
-    elif fg_value <= 20: fg_sc = 18
-    elif fg_value <= 30: fg_sc = 13
-    elif fg_value <= 45: fg_sc = 7
-    elif fg_value <= 55: fg_sc = 3
-    else: fg_sc = 0
+    if fg_value <= 10:
+        fg_sc = 22
+    elif fg_value <= 20:
+        fg_sc = 18
+    elif fg_value <= 30:
+        fg_sc = 13
+    elif fg_value <= 45:
+        fg_sc = 7
+    elif fg_value <= 55:
+        fg_sc = 3
+    else:
+        fg_sc = 0
 
     # 일봉 RSI
-    if rsi_d <= 30: rsi_sc = 20
-    elif rsi_d <= 38: rsi_sc = 16
-    elif rsi_d <= 45: rsi_sc = 12
-    elif rsi_d <= 55: rsi_sc = 6
-    elif rsi_d <= 65: rsi_sc = 2
-    else: rsi_sc = 0
+    if rsi_d <= 30:
+        rsi_sc = 20
+    elif rsi_d <= 38:
+        rsi_sc = 16
+    elif rsi_d <= 45:
+        rsi_sc = 12
+    elif rsi_d <= 55:
+        rsi_sc = 6
+    elif rsi_d <= 65:
+        rsi_sc = 2
+    else:
+        rsi_sc = 0
 
     # BB 포지션
-    if bb_pct <= 10: bb_sc = 12
-    elif bb_pct <= 25: bb_sc = 9
-    elif bb_pct <= 40: bb_sc = 6
-    elif bb_pct <= 55: bb_sc = 2
-    else: bb_sc = 0
+    if bb_pct <= 10:
+        bb_sc = 12
+    elif bb_pct <= 25:
+        bb_sc = 9
+    elif bb_pct <= 40:
+        bb_sc = 6
+    elif bb_pct <= 55:
+        bb_sc = 2
+    else:
+        bb_sc = 0
 
     # 일봉 거래량
-    if vol_ratio_d >= 2.0: vol_sc = 10
-    elif vol_ratio_d >= 1.5: vol_sc = 8
-    elif vol_ratio_d >= 1.0: vol_sc = 5
-    elif vol_ratio_d >= 0.6: vol_sc = 2
-    else: vol_sc = 0
+    if vol_ratio_d >= 2.0:
+        vol_sc = 10
+    elif vol_ratio_d >= 1.5:
+        vol_sc = 8
+    elif vol_ratio_d >= 1.0:
+        vol_sc = 5
+    elif vol_ratio_d >= 0.6:
+        vol_sc = 2
+    else:
+        vol_sc = 0
 
     # 추세
-    if trend == "UPTREND": tr_sc = 12
-    elif trend == "SIDEWAYS": tr_sc = 6
-    else: tr_sc = 0
+    if trend == "UPTREND":
+        tr_sc = 12
+    elif trend == "SIDEWAYS":
+        tr_sc = 6
+    else:
+        tr_sc = 0
 
     # ── 온체인 신호 (신규) ──
 
@@ -600,18 +625,27 @@ def calc_btc_composite(fg_value, rsi_d, bb_pct, vol_ratio_d, trend, ret_7d=0,
         oi_sc = -1  # OI 급등 = 변동성 주의
 
     # 뉴스 감정 (±8점)
-    if news_sentiment >= 0.8: news_sc = 8
-    elif news_sentiment >= 0.5: news_sc = 5
-    elif news_sentiment >= 0.2: news_sc = 2
-    elif news_sentiment > -0.2: news_sc = 0
-    elif news_sentiment > -0.5: news_sc = -2
-    elif news_sentiment > -0.8: news_sc = -5
-    else: news_sc = -8
+    if news_sentiment >= 0.8:
+        news_sc = 8
+    elif news_sentiment >= 0.5:
+        news_sc = 5
+    elif news_sentiment >= 0.2:
+        news_sc = 2
+    elif news_sentiment > -0.2:
+        news_sc = 0
+    elif news_sentiment > -0.5:
+        news_sc = -2
+    elif news_sentiment > -0.8:
+        news_sc = -5
+    else:
+        news_sc = -8
 
     # 보너스
     bonus = 0
-    if ret_7d <= -15: bonus = 5
-    elif ret_7d <= -10: bonus = 3
+    if ret_7d <= -15:
+        bonus = 5
+    elif ret_7d <= -10:
+        bonus = 3
 
     if ret_7d > 0 and trend == "UPTREND":
         bonus += 2
@@ -814,9 +848,9 @@ def check_daily_loss() -> bool:
         _KST = ZoneInfo("Asia/Seoul")
         today_start = datetime.now(_KST).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
         res = supabase.table("btc_position")\
-                        .select("pnl, entry_krw")\
-                        .eq("status", "CLOSED")\
-                        .gte("exit_time", today_start).execute()
+            .select("pnl, entry_krw")\
+            .eq("status", "CLOSED")\
+            .gte("exit_time", today_start).execute()
         if not res.data:
             return False
         total_pnl = sum(float(r["pnl"] or 0) for r in res.data)
@@ -955,7 +989,7 @@ def _rule_based_btc_signal_impl(
         return {
             "action": "HOLD",
             "confidence": 0,
-            "reason": f"[룰] DOWNTREND — BUY 금지",
+            "reason": "[룰] DOWNTREND — BUY 금지",
             "source": "RULE_BTC",
             "decision_meta": _rule_meta(),
         }
@@ -1263,8 +1297,10 @@ RSI: {rsi_d:.1f} | BB%: {mom.get('bb_pct', 50):.1f}% | 7일수익: {mom.get('ret
 
 def get_split_stage(composite_total: float) -> int:
     """복합 스코어가 높을수록 큰 비중으로 매수."""
-    if composite_total >= 70: return 3
-    if composite_total >= 55: return 2
+    if composite_total >= 70:
+        return 3
+    if composite_total >= 55:
+        return 2
     return 1
 
 # ── 주문 실행 ─────────────────────────────────────
@@ -1568,7 +1604,8 @@ def execute_trade(
                 if ok:
                     break
                 log.warning(f"포지션 DB 저장 재시도 {_attempt + 1}/{BTC_DB_RETRY_COUNT}")
-                import time as _time; _time.sleep(BTC_DB_RETRY_SLEEP)
+                import time as _time
+                _time.sleep(BTC_DB_RETRY_SLEEP)
             if not ok:
                 log.error(f"포지션 DB 저장 {BTC_DB_RETRY_COUNT}회 실패. qty={qty:.8f} BTC — 수동 확인 필요")
                 send_telegram(
@@ -1582,7 +1619,7 @@ def execute_trade(
         qty_est = qty if not DRY_RUN else invest_krw / price
         atr_val_est = indicators.get("atr", 0)
         atr_stop_est = round(price - atr_val_est * RISK["atr_multiplier"]) if atr_val_est else None
-        sl_price = atr_stop_est or int(price * (1 + RISK["stop_loss"]))
+        _sl_price = atr_stop_est or int(price * (1 + RISK["stop_loss"]))  # noqa: F841 — reserved for SL alert msg
         tp1_price = int(price * (1 + RISK.get("partial_tp_pct", 0.08)))
         tp2_price = int(price * (1 + RISK.get("partial_tp_2_pct", 0.12)))
         tp_price = int(price * (1 + RISK["take_profit"]))
@@ -1636,7 +1673,7 @@ def execute_trade(
             if _sell_ep > 0:
                 pnl_pct = (price - _sell_ep) / _sell_ep * 100
         sell_qty = btc_balance * (1 - BTC_EXECUTION_SLIPPAGE)
-        _ai_sell_ok = _execute_sell(sell_qty, "AI매도", pnl_pct=pnl_pct, price=price)
+        _execute_sell(sell_qty, "AI매도", pnl_pct=pnl_pct, price=price)
         send_telegram(
             f"🔴 <b>BTC 매도</b>\n"
             f"💰 가격: {price:,}원\n"
@@ -1998,7 +2035,7 @@ def run_trading_cycle() -> dict:
     if buy_limit_reached and not pos:
         log.info("오늘 BTC 매수 한도 도달 — 추가 매수 차단")
     elif funding_blocked:
-        log.info(f"펀딩비 롱 과열 — 매수 차단")
+        log.info("펀딩비 롱 과열 — 매수 차단")
     elif kimchi_blocked:
         log.info(f"김치 프리미엄 {kimchi:+.2f}% 과열 — 매수 차단")
     elif comp["total"] >= buy_min and not pos and htf["trend"] != "DOWNTREND":
