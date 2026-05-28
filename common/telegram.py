@@ -126,6 +126,13 @@ def send_telegram(
                 retry_after = int(resp.headers.get("Retry-After", 2))
                 time.sleep(retry_after)
                 continue
+            if resp.ok:
+                # 자비스(jay-agent) bridge — fire-and-forget, 텔레그램 흐름 무영향
+                try:
+                    from common import jay_bridge as _jb
+                    _jb.post_event(msg, priority=priority.name, source="telegram")
+                except Exception:
+                    pass
             return resp.ok
         except Exception as e:
             log.error(f"텔레그램 발송 실패: {e}")
