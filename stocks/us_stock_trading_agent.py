@@ -19,32 +19,29 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo  # v6.2 B2: ET 시간대 통일
 
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.env_loader import load_env
-from common.telegram import send_telegram as _tg_send
-from common.supabase_client import get_supabase
-from common.logger import get_logger
 from common.config import US_TRADING_LOG
-from common.utils import generate_order_id, check_order_idempotency
-from common.equity_loader import (
-    append_equity_snapshot,
-    get_effective_market_weight,
-    load_equity_curve,
-    load_recent_trades,
-    save_drawdown_state,
-)
+from common.env_loader import load_env
+from common.equity_loader import (append_equity_snapshot,
+                                  get_effective_market_weight,
+                                  load_equity_curve, load_recent_trades,
+                                  save_drawdown_state)
+from common.logger import get_logger
+from common.supabase_client import get_supabase
+from common.telegram import send_telegram as _tg_send
+from common.utils import check_order_idempotency, generate_order_id
+from execution.smart_router import SmartRouter
 from quant.risk.drawdown_guard import DrawdownGuard
 from quant.risk.drawdown_state_store import DrawdownStateStore
 from quant.risk.position_sizer import KellyPositionSizer
-from execution.smart_router import SmartRouter
 
 try:
     from common.sheets_logger import append_trade as _sheets_append
@@ -57,7 +54,8 @@ except ImportError:
     _AlpacaBroker = None
 
 try:
-    from quant.drift_detector import ConceptDriftDetector as _ConceptDriftDetector
+    from quant.drift_detector import \
+        ConceptDriftDetector as _ConceptDriftDetector
 except Exception:
     _ConceptDriftDetector = None
 
@@ -68,7 +66,7 @@ load_env()
 _log = get_logger("us_agent", US_TRADING_LOG)
 
 sys.path.insert(0, str(Path(__file__).parent))
-from us_momentum_backtest import scan_today_top_us, US_UNIVERSE
+from us_momentum_backtest import US_UNIVERSE, scan_today_top_us
 
 supabase = get_supabase()
 
@@ -579,10 +577,9 @@ def should_buy(symbol: str, score: float, indicators: dict) -> dict:
     # v6: 뉴스 감정 게이트
     try:
         from agents.news_analyst import get_symbol_sentiment
-        from common.config import (
-            NEWS_SENTIMENT_BLOCK_THRESHOLD, NEWS_SENTIMENT_BONUS_THRESHOLD,
-            NEWS_SENTIMENT_BONUS_POINTS,
-        )
+        from common.config import (NEWS_SENTIMENT_BLOCK_THRESHOLD,
+                                   NEWS_SENTIMENT_BONUS_POINTS,
+                                   NEWS_SENTIMENT_BONUS_THRESHOLD)
         _sentiment = get_symbol_sentiment(symbol)
         if _sentiment < NEWS_SENTIMENT_BLOCK_THRESHOLD:
             return {"action": "HOLD", "reason": f"뉴스 부정적 ({_sentiment:.2f} < {NEWS_SENTIMENT_BLOCK_THRESHOLD})"}
@@ -659,11 +656,9 @@ def _get_atr_pct(symbol: str, period: int = 14) -> float:
 
 def _get_dynamic_sl_tp(symbol: str) -> tuple:
     """ATR 기반 동적 SL/TP 계산. (sl_pct, tp_pct) 반환 (sl은 음수)."""
-    from common.config import (
-        ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER,
-        ATR_MIN_STOP_LOSS, ATR_MAX_STOP_LOSS,
-        ATR_MIN_TAKE_PROFIT, ATR_MAX_TAKE_PROFIT,
-    )
+    from common.config import (ATR_MAX_STOP_LOSS, ATR_MAX_TAKE_PROFIT,
+                               ATR_MIN_STOP_LOSS, ATR_MIN_TAKE_PROFIT,
+                               ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER)
     atr_pct = _get_atr_pct(symbol)
     if atr_pct <= 0:
         return RISK["stop_loss"], RISK["take_profit"]
@@ -925,9 +920,10 @@ def execute_buy(symbol: str, score: float, indicators: dict, signal: Optional[di
         _WORKSPACE_ROOT = str(Path(__file__).resolve().parents[1])
         if _WORKSPACE_ROOT not in _sys.path:
             _sys.path.insert(0, _WORKSPACE_ROOT)
-        from quant.factors.registry import calc_all, FactorContext
         import json as _json
         from datetime import datetime as _dt
+
+        from quant.factors.registry import FactorContext, calc_all
         _fctx = FactorContext()
         _today_iso = _dt.now().date().isoformat()
         _all_factors = calc_all(_today_iso, symbol=symbol, market='us', context=_fctx)
@@ -1252,10 +1248,23 @@ def run_trading_cycle():
     log("=" * 50)
     log("🇺🇸 US 자동매매 사이클 시작")
 
+    # PR #24: sim 모드 명시적 경고. 실거래 진입 절차는 docs/US_TRADING_GUIDE.md
+    import os as _os
+    _us_env_check = _os.environ.get("US_TRADING_ENV", "sim").lower()
+    if _us_env_check == "sim":
+        log("⚠️ US_TRADING_ENV=sim — Alpaca 미연결, virtual_capital 시뮬레이션 (실거래 X)", "WARN")
+        log("   → 실거래 전환: docs/US_TRADING_GUIDE.md", "WARN")
+    elif _us_env_check == "paper":
+        log("📄 US_TRADING_ENV=paper — Alpaca paper 모드 (가상 주문, 슬리피지/수수료 실증)", "INFO")
+    elif _us_env_check == "live":
+        log("💰 US_TRADING_ENV=live — Alpaca 실거래 모드", "INFO")
+
     try:
         open_value = sum(float(p.get("quantity", 0) or 0) * float(p.get("price", 0) or 0) for p in get_open_positions())
         account_equity = max(RISK["virtual_capital"], open_value)
-        append_equity_snapshot('us', account_equity, {"source": "virtual_capital"})
+        # PR #24: source 라벨에 모드 반영
+        _eq_source = {"sim": "virtual_capital", "paper": "alpaca_paper", "live": "alpaca_live"}.get(_us_env_check, "virtual_capital")
+        append_equity_snapshot('us', account_equity, {"source": _eq_source, "mode": _us_env_check})
         tw = get_effective_market_weight('US')
         if tw is not None:
             log(f"리밸런싱 목표 비중(US): {tw:.1%}")
