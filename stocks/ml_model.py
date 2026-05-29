@@ -15,12 +15,13 @@ XGBoost 분류 모델:
 
 import json
 import os
-import sys
 import pickle
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+
 from common.env_loader import load_env
 
 load_env()
@@ -723,19 +724,30 @@ def load_training_data(target_days=3, target_return=0.02):
             if features is None:
                 continue
 
-            future_return = (closes[i + target_days] - closes[i]) / max(closes[i], 1)
-            # v6: 리스크 조정 타겟 — 양의 수익 + 낙폭 제한
-            # 기간 내 최대 낙폭 계산 (max drawdown within target_days)
-            _future_prices = closes[i:i + target_days + 1]
-            _max_dd = 0.0
-            if len(_future_prices) >= 2:
-                _peak = _future_prices[0]
-                for _fp in _future_prices[1:]:
-                    _peak = max(_peak, _fp)
-                    _dd = (_fp - _peak) / _peak
-                    _max_dd = min(_max_dd, _dd)
-            # 리스크 조정: 수익 양수 AND 낙폭 -1.5% 이내
-            label = 1 if (future_return >= target_return and _max_dd > -0.015) else 0
+            # PR #25: Triple Barrier labeling (Lopez de Prado).
+            # TP(+target_return) 먼저 닿으면 1, SL(-target_return) 먼저 닿으면 0,
+            # 어느 쪽도 안 닿고 vertical barrier(target_days) 만료 시 future_return 부호로 라벨.
+            entry = closes[i]
+            tp_price = entry * (1.0 + target_return)
+            sl_price = entry * (1.0 - target_return)
+            label = None
+            for _step in range(1, target_days + 1):
+                _idx = i + _step
+                if _idx >= len(closes):
+                    break
+                _hi = highs[_idx] if _idx < len(highs) else closes[_idx]
+                _lo = lows[_idx] if _idx < len(lows) else closes[_idx]
+                # 같은 봉에 TP/SL 둘 다 닿으면 OHLC상 우선순위 결정 불가 → SL 보수적 가정
+                if _lo <= sl_price:
+                    label = 0
+                    break
+                if _hi >= tp_price:
+                    label = 1
+                    break
+            if label is None:
+                # vertical barrier 만료 — 시점 종가 기준 양수면 1 (약 라벨, 학습 신호 약화)
+                _final = closes[min(i + target_days, len(closes) - 1)]
+                label = 1 if (_final - entry) / max(entry, 1) >= 0 else 0
 
             all_X.append(features)
             all_y.append(label)
@@ -900,9 +912,9 @@ def walk_forward_validate(X: np.ndarray, y: np.ndarray, n_splits: int = 8) -> di
         }
     """
     try:
-        from xgboost import XGBClassifier
+        from sklearn.metrics import precision_score, roc_auc_score
         from sklearn.model_selection import TimeSeriesSplit
-        from sklearn.metrics import roc_auc_score, precision_score
+        from xgboost import XGBClassifier
     except ImportError as e:
         print(f'의존성 부족: {e}')
         return {}
@@ -1028,10 +1040,8 @@ def load_performance_metrics(horizon_key: str = '3d') -> dict:
 def train_model(horizon_key: str = '3d'):
     """앙상블 스태킹 학습. LightGBM/CatBoost 없으면 XGBoost 폴백."""
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (
-        classification_report, accuracy_score,
-        roc_auc_score, average_precision_score,
-    )
+    from sklearn.metrics import (accuracy_score, average_precision_score,
+                                 classification_report, roc_auc_score)
     from sklearn.model_selection import TimeSeriesSplit
 
     cfg = HORIZON_CONFIGS[horizon_key]
