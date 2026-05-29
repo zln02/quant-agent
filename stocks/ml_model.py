@@ -15,12 +15,13 @@ XGBoost 분류 모델:
 
 import json
 import os
-import sys
 import pickle
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+
 from common.env_loader import load_env
 
 load_env()
@@ -723,19 +724,30 @@ def load_training_data(target_days=3, target_return=0.02):
             if features is None:
                 continue
 
-            future_return = (closes[i + target_days] - closes[i]) / max(closes[i], 1)
-            # v6: 리스크 조정 타겟 — 양의 수익 + 낙폭 제한
-            # 기간 내 최대 낙폭 계산 (max drawdown within target_days)
-            _future_prices = closes[i:i + target_days + 1]
-            _max_dd = 0.0
-            if len(_future_prices) >= 2:
-                _peak = _future_prices[0]
-                for _fp in _future_prices[1:]:
-                    _peak = max(_peak, _fp)
-                    _dd = (_fp - _peak) / _peak
-                    _max_dd = min(_max_dd, _dd)
-            # 리스크 조정: 수익 양수 AND 낙폭 -1.5% 이내
-            label = 1 if (future_return >= target_return and _max_dd > -0.015) else 0
+            # PR #25: Triple Barrier labeling (Lopez de Prado).
+            # TP(+target_return) 먼저 닿으면 1, SL(-target_return) 먼저 닿으면 0,
+            # 어느 쪽도 안 닿고 vertical barrier(target_days) 만료 시 future_return 부호로 라벨.
+            entry = closes[i]
+            tp_price = entry * (1.0 + target_return)
+            sl_price = entry * (1.0 - target_return)
+            label = None
+            for _step in range(1, target_days + 1):
+                _idx = i + _step
+                if _idx >= len(closes):
+                    break
+                _hi = highs[_idx] if _idx < len(highs) else closes[_idx]
+                _lo = lows[_idx] if _idx < len(lows) else closes[_idx]
+                # 같은 봉에 TP/SL 둘 다 닿으면 OHLC상 우선순위 결정 불가 → SL 보수적 가정
+                if _lo <= sl_price:
+                    label = 0
+                    break
+                if _hi >= tp_price:
+                    label = 1
+                    break
+            if label is None:
+                # vertical barrier 만료 — 시점 종가 기준 양수면 1 (약 라벨, 학습 신호 약화)
+                _final = closes[min(i + target_days, len(closes) - 1)]
+                label = 1 if (_final - entry) / max(entry, 1) >= 0 else 0
 
             all_X.append(features)
             all_y.append(label)
@@ -900,9 +912,9 @@ def walk_forward_validate(X: np.ndarray, y: np.ndarray, n_splits: int = 8) -> di
         }
     """
     try:
-        from xgboost import XGBClassifier
+        from sklearn.metrics import precision_score, roc_auc_score
         from sklearn.model_selection import TimeSeriesSplit
-        from sklearn.metrics import roc_auc_score, precision_score
+        from xgboost import XGBClassifier
     except ImportError as e:
         print(f'의존성 부족: {e}')
         return {}
@@ -1028,10 +1040,8 @@ def load_performance_metrics(horizon_key: str = '3d') -> dict:
 def train_model(horizon_key: str = '3d'):
     """앙상블 스태킹 학습. LightGBM/CatBoost 없으면 XGBoost 폴백."""
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (
-        classification_report, accuracy_score,
-        roc_auc_score, average_precision_score,
-    )
+    from sklearn.metrics import (accuracy_score, average_precision_score,
+                                 classification_report, roc_auc_score)
     from sklearn.model_selection import TimeSeriesSplit
 
     cfg = HORIZON_CONFIGS[horizon_key]
@@ -1406,8 +1416,59 @@ def _bundle_predict_probability(bundle: dict, X: np.ndarray) -> tuple[float, dic
         except Exception:
             pass
 
-    ensemble_prob = float(sum(probs.values()) / len(probs))
+    # PR #25: regime-aware fallback blending (meta-model 실패 시).
+    # 레짐별 모델 가중치 가중평균: BULL은 트리(xgb) 강함, BEAR는 부스팅(lgbm) 강함.
+    ensemble_prob = _regime_weighted_ensemble(probs)
     return ensemble_prob, probs
+
+
+_REGIME_MODEL_WEIGHTS = {
+    'BULL':       {'xgb': 1.2, 'lgbm': 1.0, 'catboost': 0.9},
+    'RISK_ON':    {'xgb': 1.2, 'lgbm': 1.0, 'catboost': 0.9},
+    'TRANSITION': {'xgb': 1.0, 'lgbm': 1.0, 'catboost': 1.0},
+    'RISK_OFF':   {'xgb': 0.9, 'lgbm': 1.2, 'catboost': 1.0},
+    'BEAR':       {'xgb': 0.9, 'lgbm': 1.2, 'catboost': 1.0},
+    'CRISIS':     {'xgb': 0.8, 'lgbm': 1.3, 'catboost': 1.0},
+}
+
+
+def _regime_weighted_ensemble(probs: dict, regime: str | None = None) -> float:
+    """PR #25: regime-aware 가중 앙상블. regime 미제공 시 RegimeClassifier 조회."""
+    if not probs:
+        return 0.0
+    if regime is None:
+        try:
+            from agents.regime_classifier import get_regime_cached
+            regime = (get_regime_cached(1800) or {}).get('regime', 'TRANSITION')
+        except Exception:
+            regime = 'TRANSITION'
+    weights = _REGIME_MODEL_WEIGHTS.get(str(regime).upper(),
+                                       _REGIME_MODEL_WEIGHTS['TRANSITION'])
+    total_w = sum(weights.get(name, 1.0) for name in probs)
+    if total_w <= 0:
+        return float(sum(probs.values()) / len(probs))
+    weighted = sum(probs[name] * weights.get(name, 1.0) for name in probs)
+    return float(weighted / total_w)
+
+
+def get_regime_adjusted_ml_threshold(base: float = 0.78, regime: str | None = None) -> float:
+    """PR #25: regime별 ML BUY 임계값 조정.
+    BULL: 약간 완화 (-2pp), BEAR/CRISIS: 강화 (+5pp / +10pp)."""
+    if regime is None:
+        try:
+            from agents.regime_classifier import get_regime_cached
+            regime = (get_regime_cached(1800) or {}).get('regime', 'TRANSITION')
+        except Exception:
+            regime = 'TRANSITION'
+    deltas = {
+        'BULL': -0.02, 'RISK_ON': -0.02,
+        'TRANSITION': 0.0,
+        'RISK_OFF': 0.05, 'BEAR': 0.05,
+        'CRISIS': 0.10,
+    }
+    adjusted = base + deltas.get(str(regime).upper(), 0.0)
+    return max(0.50, min(0.95, adjusted))
+
 
 
 def predict_stock(stock_code: str, horizon_key: str = '3d') -> dict:
