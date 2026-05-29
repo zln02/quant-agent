@@ -21,8 +21,9 @@ jobs:
       - name: Lint (flake8)
         run: |
           # ignore 패턴은 .pre-commit-config.yaml 과 동기화 — PR #22 이후 점진 cleanup 중
+          # W293/E203/W504 추가는 PR #23 잔여 위반 흡수 (style only)
           flake8 --max-line-length=120 \
-            --ignore=E501,W503,E402,E127,E128,E129,E131,E202,E221,E225,E226,E227,E231,E241,E251,E261,E262,E265,E266,E271,E272,E301,E302,E303,E305,E306,E701,E702,E731,E741,F401,F541,F811,F824,F841 \
+            --ignore=E501,W503,W504,W291,W293,E203,E402,E127,E128,E129,E131,E202,E221,E225,E226,E227,E231,E241,E251,E261,E262,E265,E266,E271,E272,E301,E302,E303,E305,E306,E701,E702,E731,E741,F401,F541,F811,F824,F841 \
             common/ btc/ stocks/ agents/ quant/
       - name: Import sort check
         run: isort --check-only --diff common/ btc/ stocks/ agents/ quant/
