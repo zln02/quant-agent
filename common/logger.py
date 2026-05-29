@@ -23,6 +23,21 @@ from common.config import LOG_DIR
 # Ensure log directory exists
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# 로그 파일·디렉터리 권한: 소유자 RW, 그룹 R, 기타 차단 (640/750)
+# 2026-04-19 보안감사 H-1: 기존 644가 world-readable이라 Supabase JWT·Kiwoom 토큰 노출 위험.
+_LOG_FILE_MODE = 0o640
+_LOG_DIR_MODE = 0o750
+
+
+def _chmod_safe(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except (OSError, PermissionError):
+        pass
+
+
+_chmod_safe(LOG_DIR, _LOG_DIR_MODE)
+
 _FMT = "[%(asctime)s][%(name)s][%(levelname)s] %(message)s"
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -127,12 +142,14 @@ class AgentLogger:
                 fh.setLevel(logging.DEBUG)
                 fh.setFormatter(formatter)
                 self._log.addHandler(fh)
+                _chmod_safe(log_file, _LOG_FILE_MODE)
             except PermissionError:
                 pass
 
         # JSON handler — 구조화 로그 (DEBUG+)
         json_dir = LOG_DIR / "json"
         json_dir.mkdir(parents=True, exist_ok=True)
+        _chmod_safe(json_dir, _LOG_DIR_MODE)
         jsonl_path = json_dir / f"{name}.jsonl"
         try:
             # 권한 문제(root가 먼저 생성한 경우)를 방어: 쓰기 가능하면 그대로, 아니면 삭제 후 재생성
@@ -150,6 +167,7 @@ class AgentLogger:
             jfh.setLevel(logging.DEBUG)
             jfh.setFormatter(JsonFormatter())
             self._log.addHandler(jfh)
+            _chmod_safe(jsonl_path, _LOG_FILE_MODE)
         except PermissionError:
             pass  # JSON 구조화 로그 생략, 텍스트 로그는 정상 작동
 
