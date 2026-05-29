@@ -1416,8 +1416,59 @@ def _bundle_predict_probability(bundle: dict, X: np.ndarray) -> tuple[float, dic
         except Exception:
             pass
 
-    ensemble_prob = float(sum(probs.values()) / len(probs))
+    # PR #25: regime-aware fallback blending (meta-model 실패 시).
+    # 레짐별 모델 가중치 가중평균: BULL은 트리(xgb) 강함, BEAR는 부스팅(lgbm) 강함.
+    ensemble_prob = _regime_weighted_ensemble(probs)
     return ensemble_prob, probs
+
+
+_REGIME_MODEL_WEIGHTS = {
+    'BULL':       {'xgb': 1.2, 'lgbm': 1.0, 'catboost': 0.9},
+    'RISK_ON':    {'xgb': 1.2, 'lgbm': 1.0, 'catboost': 0.9},
+    'TRANSITION': {'xgb': 1.0, 'lgbm': 1.0, 'catboost': 1.0},
+    'RISK_OFF':   {'xgb': 0.9, 'lgbm': 1.2, 'catboost': 1.0},
+    'BEAR':       {'xgb': 0.9, 'lgbm': 1.2, 'catboost': 1.0},
+    'CRISIS':     {'xgb': 0.8, 'lgbm': 1.3, 'catboost': 1.0},
+}
+
+
+def _regime_weighted_ensemble(probs: dict, regime: str | None = None) -> float:
+    """PR #25: regime-aware 가중 앙상블. regime 미제공 시 RegimeClassifier 조회."""
+    if not probs:
+        return 0.0
+    if regime is None:
+        try:
+            from agents.regime_classifier import get_regime_cached
+            regime = (get_regime_cached(1800) or {}).get('regime', 'TRANSITION')
+        except Exception:
+            regime = 'TRANSITION'
+    weights = _REGIME_MODEL_WEIGHTS.get(str(regime).upper(),
+                                       _REGIME_MODEL_WEIGHTS['TRANSITION'])
+    total_w = sum(weights.get(name, 1.0) for name in probs)
+    if total_w <= 0:
+        return float(sum(probs.values()) / len(probs))
+    weighted = sum(probs[name] * weights.get(name, 1.0) for name in probs)
+    return float(weighted / total_w)
+
+
+def get_regime_adjusted_ml_threshold(base: float = 0.78, regime: str | None = None) -> float:
+    """PR #25: regime별 ML BUY 임계값 조정.
+    BULL: 약간 완화 (-2pp), BEAR/CRISIS: 강화 (+5pp / +10pp)."""
+    if regime is None:
+        try:
+            from agents.regime_classifier import get_regime_cached
+            regime = (get_regime_cached(1800) or {}).get('regime', 'TRANSITION')
+        except Exception:
+            regime = 'TRANSITION'
+    deltas = {
+        'BULL': -0.02, 'RISK_ON': -0.02,
+        'TRANSITION': 0.0,
+        'RISK_OFF': 0.05, 'BEAR': 0.05,
+        'CRISIS': 0.10,
+    }
+    adjusted = base + deltas.get(str(regime).upper(), 0.0)
+    return max(0.50, min(0.95, adjusted))
+
 
 
 def predict_stock(stock_code: str, horizon_key: str = '3d') -> dict:
