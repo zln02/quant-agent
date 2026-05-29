@@ -101,3 +101,54 @@ def test_stats_basic():
 def test_stats_empty():
     from scripts.paper_live_diff import _stats
     assert _stats([]) == {"n": 0}
+
+
+def test_detect_mode_events_tracks_round_trip(tmp_path, monkeypatch):
+    """PR #25 hotfix(#7): sim→paper→sim→live 재전환 추적."""
+    from scripts import paper_live_diff as pld
+
+    eq = tmp_path / "us.jsonl"
+    rows = [
+        {"timestamp": "2026-05-20T00:00:00+00:00", "metadata": {"mode": "sim"}},
+        {"timestamp": "2026-05-21T00:00:00+00:00", "metadata": {"mode": "paper"}},
+        {"timestamp": "2026-05-22T00:00:00+00:00", "metadata": {"mode": "paper"}},
+        {"timestamp": "2026-05-23T00:00:00+00:00", "metadata": {"mode": "sim"}},   # rollback
+        {"timestamp": "2026-05-24T00:00:00+00:00", "metadata": {"mode": "live"}},
+    ]
+    eq.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    monkeypatch.setattr(pld, "_equity_file", lambda: eq)
+
+    events = pld._detect_mode_events()
+    # 같은 mode 연속 압축 + rollback 검출
+    assert events == [
+        ("2026-05-20T00:00:00+00:00", "sim"),
+        ("2026-05-21T00:00:00+00:00", "paper"),
+        ("2026-05-23T00:00:00+00:00", "sim"),
+        ("2026-05-24T00:00:00+00:00", "live"),
+    ]
+
+
+def test_trade_mode_with_events_handles_rollback(tmp_path, monkeypatch):
+    """기존 sticky-last 로직은 rollback 후에도 paper로 남았음. events는 sim 복원."""
+    from scripts import paper_live_diff as pld
+    events = [
+        ("2026-05-20T00:00:00+00:00", "sim"),
+        ("2026-05-21T00:00:00+00:00", "paper"),
+        ("2026-05-23T00:00:00+00:00", "sim"),     # rollback
+        ("2026-05-24T00:00:00+00:00", "live"),
+    ]
+    # 5/22 → paper 윈도우 안
+    assert pld._trade_mode("2026-05-22T12:00:00+00:00", {}, events=events) == "paper"
+    # 5/23 12:00 → rollback 이후 sim
+    assert pld._trade_mode("2026-05-23T12:00:00+00:00", {}, events=events) == "sim"
+    # 5/24 12:00 → live
+    assert pld._trade_mode("2026-05-24T12:00:00+00:00", {}, events=events) == "live"
+
+
+def test_trade_mode_events_none_falls_back_to_transitions():
+    """events=None 백워드-호환: transitions dict 만으로 동작."""
+    from scripts import paper_live_diff as pld
+    transitions = {"sim": "2026-05-20T00:00:00+00:00",
+                   "paper": "2026-05-22T00:00:00+00:00"}
+    # events 미지정 → 기존 sticky-last
+    assert pld._trade_mode("2026-05-25T12:00:00+00:00", transitions) == "paper"

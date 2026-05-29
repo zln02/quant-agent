@@ -40,11 +40,26 @@ def _equity_file() -> Path:
 
 
 def _detect_mode_transitions() -> dict:
-    """equity.jsonl 에서 mode 전환 시각 추출. {mode: first_seen_iso}."""
+    """equity.jsonl 에서 mode 전환 시각 추출 (PR #25 hotfix: 첫 등장만 → 모든 전환).
+
+    반환: {mode: first_seen_iso}  (백워드-호환 표현)
+    내부 events list 은 _detect_mode_events 가 별도 제공한다.
+    """
+    events = _detect_mode_events()
+    seen: dict[str, str] = {}
+    for ts, mode in events:
+        seen.setdefault(mode, ts)
+    return seen
+
+
+def _detect_mode_events() -> list[tuple[str, str]]:
+    """equity.jsonl 의 mode 전환 이벤트 시계열 [(timestamp, mode), ...].
+    sim→paper→sim→live 같은 재전환을 정확히 추적한다."""
     f = _equity_file()
     if not f.exists():
-        return {}
-    seen: dict[str, str] = {}
+        return []
+    events: list[tuple[str, str]] = []
+    last_mode: str | None = None
     with f.open("r", encoding="utf-8") as fp:
         for line in fp:
             try:
@@ -54,20 +69,35 @@ def _detect_mode_transitions() -> dict:
             md = row.get("metadata") or {}
             mode = md.get("mode")
             ts = row.get("timestamp")
-            if mode and ts and mode not in seen:
-                seen[mode] = ts
-    return seen
+            if not mode or not ts:
+                continue
+            if mode != last_mode:
+                events.append((str(ts), str(mode)))
+                last_mode = mode
+    return events
 
 
-def _trade_mode(created_at: str, transitions: dict) -> str:
-    """trade 시각이 paper/live transition 이후면 해당 모드, 아니면 sim."""
-    if not transitions:
+def _trade_mode(created_at: str, transitions: dict, events: list | None = None) -> str:
+    """trade 시각이 속하는 모드. events가 주어지면 재전환 추적 (PR #25 hotfix)."""
+    if events is None:
+        # 백워드-호환: transitions dict 만 받은 경우 first-seen 기준
+        if not transitions:
+            return "unknown"
+        ordered = sorted(transitions.items(), key=lambda kv: kv[1])
+        current = "sim"
+        for mode, start in ordered:
+            if created_at >= start:
+                current = mode
+        return current
+    # events 기반: created_at 이전 가장 최근 이벤트의 mode
+    if not events:
         return "unknown"
-    ordered = sorted(transitions.items(), key=lambda kv: kv[1])
     current = "sim"
-    for mode, start in ordered:
-        if created_at >= start:
+    for ts, mode in events:
+        if created_at >= ts:
             current = mode
+        else:
+            break
     return current
 
 
@@ -106,8 +136,11 @@ def _stats(values: list[float]) -> dict:
     }
 
 
-def analyze(trades: list[dict], transitions: dict) -> dict:
-    """모드별 PnL 통계 + 시그널 소스별 분포 + 슬리피지(예측-실제) 상관."""
+def analyze(trades: list[dict], transitions: dict, events: list | None = None) -> dict:
+    """모드별 PnL 통계 + 시그널 소스별 분포 + 슬리피지(예측-실제) 상관.
+
+    events 가 주어지면 sim→paper→sim 재전환을 추적 (PR #25 hotfix).
+    """
     by_mode: dict[str, list[float]] = {}
     by_source: dict[str, list[float]] = {}
     score_pnl_pairs: list[tuple[float, float]] = []
@@ -121,7 +154,7 @@ def analyze(trades: list[dict], transitions: dict) -> dict:
         except (TypeError, ValueError):
             continue
         created = str(t.get("created_at", ""))
-        mode = _trade_mode(created, transitions)
+        mode = _trade_mode(created, transitions, events=events)
         by_mode.setdefault(mode, []).append(pnl)
         src = str(t.get("signal_source") or "UNKNOWN").upper()
         by_source.setdefault(src, []).append(pnl)
@@ -176,10 +209,13 @@ def main() -> int:
 
     trades = _fetch_closed_trades(args.days)
     transitions = _detect_mode_transitions()
+    events = _detect_mode_events()  # PR #25 hotfix: 재전환 추적
     if args.mode:
         trades = [t for t in trades
-                  if _trade_mode(str(t.get("created_at", "")), transitions) == args.mode]
-    report = analyze(trades, transitions)
+                  if _trade_mode(str(t.get("created_at", "")), transitions,
+                                 events=events) == args.mode]
+    report = analyze(trades, transitions, events=events)
+    report["mode_events"] = events
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

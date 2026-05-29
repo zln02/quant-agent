@@ -7,11 +7,17 @@ KR stocks/ml_model.py 패턴 미러. 단순화:
 - target: 다음 K봉 후 +R% 이상 = 1 (Triple Barrier 적용)
 - xgb only (앙상블은 KR 메인 라인에서)
 
-학습 후 brain/ml/btc/{xgb_model.ubj, performance.json} 생성.
+학습 후 brain/ml/btc/{xgb_model.ubj, performance.json, feature_baseline.npz} 생성.
 predict_btc(): 최신 시점 매수 확률 반환.
 
 신규 인프라 — 사용자 train 트리거 필요:
     .venv/bin/python -m btc.btc_ml_model train
+
+== 알려진 한계 (후속 PR) ==
+- (#1) Triple Barrier 같은 봉에 TP/SL 둘 다 닿으면 SL 우선 — 분봉 없는 1h 데이터 한계
+- (#2) Vertical barrier 만료 시 close 부호로 약 라벨 — 학습 신호 약함
+- (#6) predict_btc 호출마다 2000봉 fetch — 캐시 미적용
+- (#8) F&G/funding/OI/whale 등 BTC 특화 피처 미반영 — AUC 0.55 한계의 주 원인
 """
 from __future__ import annotations
 
@@ -25,16 +31,18 @@ import numpy as np
 import pyupbit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.config import \
+    BRAIN_PATH  # noqa: E402  # 단일 진실 — workspace/brain 고정
 from common.env_loader import load_env  # noqa: E402
 
 load_env()
 
-# v2.1: 모델 저장 경로 — KR 패턴 일치
-BRAIN_PATH = Path(os.environ.get("OPENCLAW_BRAIN", "")) if os.environ.get("OPENCLAW_BRAIN") else Path(__file__).resolve().parents[1] / "brain"
 MODEL_DIR = BRAIN_PATH / "ml" / "btc"
 MODEL_PATH = MODEL_DIR / "xgb_model.ubj"
 PERF_PATH = MODEL_DIR / "performance.json"
 DRIFT_PATH = MODEL_DIR / "drift_report.json"
+# PR #25 hotfix: 학습 시점 feature 분포 baseline — drift 비교의 진짜 기준
+BASELINE_PATH = MODEL_DIR / "feature_baseline.npz"
 
 # 학습 파라미터 (BTC 변동성 고려)
 INTERVAL = "minute60"     # 1시간봉
@@ -195,6 +203,30 @@ def train(verbose: bool = True) -> dict:
     except ImportError:
         return {"ok": False, "reason": "xgboost_missing"}
 
+    # PR #25 hotfix(#4): walk-forward CV — 시계열 5-fold, 단순 80/20 보강
+    try:
+        from sklearn.metrics import roc_auc_score
+        from sklearn.model_selection import TimeSeriesSplit
+        wf_aucs = []
+        tscv = TimeSeriesSplit(n_splits=5)
+        for _fold, (_tr_i, _val_i) in enumerate(tscv.split(X_tr), 1):
+            if len(set(y_tr[_val_i])) < 2:
+                continue
+            _m = xgb.XGBClassifier(
+                n_estimators=200, max_depth=4, learning_rate=0.05,
+                scale_pos_weight=scale_pos_weight, eval_metric="auc",
+                random_state=42, n_jobs=2,
+            )
+            _m.fit(X_tr[_tr_i], y_tr[_tr_i], verbose=False)
+            _p = _m.predict_proba(X_tr[_val_i])[:, 1]
+            wf_aucs.append(float(roc_auc_score(y_tr[_val_i], _p)))
+        if verbose and wf_aucs:
+            print(f"walk-forward AUC: {[round(a,3) for a in wf_aucs]} mean={sum(wf_aucs)/len(wf_aucs):.3f}")
+    except Exception as _wfe:
+        wf_aucs = []
+        if verbose:
+            print(f"walk-forward 스킵: {_wfe}")
+
     model = xgb.XGBClassifier(
         n_estimators=200, max_depth=4, learning_rate=0.05,
         scale_pos_weight=scale_pos_weight, eval_metric="auc",
@@ -204,6 +236,8 @@ def train(verbose: bool = True) -> dict:
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model.save_model(str(MODEL_PATH))
+    # PR #25 hotfix(#5): 학습 시점 X_tr 분포를 baseline으로 저장 — drift 비교 기준
+    np.savez_compressed(str(BASELINE_PATH), X_train=X_tr)
 
     # OOS 평가
     from sklearn.metrics import accuracy_score, roc_auc_score
@@ -218,6 +252,8 @@ def train(verbose: bool = True) -> dict:
         "buy_ratio": round(buys / len(X), 3),
         "oos_accuracy": round(acc, 3),
         "oos_auc": round(auc, 3),
+        "walk_forward_auc_mean": round(sum(wf_aucs) / len(wf_aucs), 3) if wf_aucs else None,
+        "walk_forward_auc_folds": [round(a, 3) for a in wf_aucs],
         "features": FEATURE_NAMES,
         "interval": INTERVAL,
         "target_horizon": TARGET_HORIZON,
@@ -283,19 +319,27 @@ def _psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
 
 
 def build_drift_report(recent_samples: int = 200) -> dict:
-    """BTC ML drift report (PR #25). 학습 시점 분포 vs 최근 분포 PSI/KS."""
+    """BTC ML drift report (PR #25). 학습 시점 baseline vs 최근 분포 PSI."""
     import time
     if not PERF_PATH.exists():
         return {"status": "NO_MODEL", "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+
+    # PR #25 hotfix(#5): 학습 시점 X_tr 분포를 baseline.npz 에서 로드
+    if not BASELINE_PATH.exists():
+        return {"status": "NO_BASELINE",
+                "hint": "재학습 필요 — train() 호출 시 feature_baseline.npz 생성됨",
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    try:
+        train_feats = np.load(str(BASELINE_PATH))["X_train"]
+    except Exception as _le:
+        return {"status": "BASELINE_LOAD_FAIL", "error": str(_le),
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
     closes, volumes, highs, lows = _fetch_ohlcv()
     if len(closes) < FEATURE_LOOKBACK + recent_samples:
         return {"status": "INSUFFICIENT_DATA", "samples": len(closes),
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
-    # 학습 시점 feature 분포: 전체의 앞 80% (학습셋과 동일 윈도우)
-    split = int(len(closes) * 0.8)
-    train_feats, _ = _build_training_dataset(closes[:split], volumes[:split], highs[:split], lows[:split])
     recent_feats, _ = _build_training_dataset(closes[-recent_samples:], volumes[-recent_samples:],
                                                highs[-recent_samples:], lows[-recent_samples:])
     if len(train_feats) == 0 or len(recent_feats) == 0:
