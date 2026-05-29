@@ -19,6 +19,8 @@ _COOLDOWN_DIR = Path("/tmp/openclaw_alert_cooldown")
 _COOLDOWN_DIR.mkdir(parents=True, exist_ok=True)
 
 _US_LOG = Path("/app/logs/us_trading.log")
+_EQUITY_DIR = Path("/app/brain/equity")
+_EQUITY_STALE_H = 24
 _KR_HOLIDAYS = holidays.SouthKorea()
 
 THRESHOLDS = {
@@ -87,6 +89,33 @@ def _check_us_silence() -> bool:
     return (time.time() - _US_LOG.stat().st_mtime) > 86400
 
 
+def _check_equity_stale() -> list[tuple[str, float]]:
+    """PR #24: equity.jsonl 24h+ stale 마켓 리스트 반환 [(market, age_h)]."""
+    stale: list[tuple[str, float]] = []
+    if not _EQUITY_DIR.exists():
+        return stale
+    for market in ("btc", "kr", "us"):
+        f = _EQUITY_DIR / f"{market}.jsonl"
+        if not f.exists():
+            continue
+        age_h = (time.time() - f.stat().st_mtime) / 3600
+        if age_h > _EQUITY_STALE_H:
+            stale.append((market, age_h))
+    return stale
+
+
+def _fire_equity_stale(market: str, age_h: float) -> None:
+    kst = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M KST")
+    msg = (
+        f"🚨 EQUITY STALE [{market.upper()}]\n"
+        f"마지막 적재: {age_h:.1f}시간 전 (임계 {_EQUITY_STALE_H}h)\n"
+        f"시점: {kst}\n"
+        f"확인: 잔고/API 키 만료 의심"
+    )
+    send_telegram(msg, priority=Priority.URGENT)
+    _mark_alert_sent(f"equity_{market}")
+
+
 def _fire(market: str, count: int, window_h: int, min_trades: int) -> None:
     kst = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M KST")
     msg = (
@@ -113,6 +142,12 @@ def check_all() -> list[str]:
     if _check_us_silence() and not _in_cooldown("US", 86400):
         _fire("US", 0, 24, 1)
         fired.append("US")
+    # PR #24: equity 적재 stale 감시 (mkt별 24h cooldown)
+    for market, age_h in _check_equity_stale():
+        if _in_cooldown(f"equity_{market}", 86400):
+            continue
+        _fire_equity_stale(market, age_h)
+        fired.append(f"equity_{market}")
     return fired
 
 
