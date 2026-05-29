@@ -146,7 +146,8 @@ class CrossMarketRiskManager:
 
         Args:
             total_capital: total portfolio capital (KRW-denominated).
-                           If 0, uses sum of position values as proxy.
+                           If 0, auto-estimate from latest equity.jsonl (PR #27).
+                           If estimation fails, fall back to position-value proxy.
         """
         btc = self._load_btc_snapshot()
         kr = self._load_kr_snapshot()
@@ -154,10 +155,28 @@ class CrossMarketRiskManager:
 
         total_position = btc.position_value + kr.position_value + us.position_value
 
+        # PR #27: total_capital_not_provided WARN 제거 — equity.jsonl 자동 추정
         if total_capital <= 0:
-            log.warning(
-                "cross_market_skip",
-                reason="total_capital_not_provided",
+            try:
+                from common.equity_loader import load_equity_curve
+                btc_curve = load_equity_curve('btc', lookback_days=2) or []
+                kr_curve = load_equity_curve('kr', lookback_days=2) or []
+                us_curve = load_equity_curve('us', lookback_days=2) or []
+                btc_eq = float(btc_curve[-1].get('equity', 0)) if btc_curve else 0.0
+                kr_eq = float(kr_curve[-1].get('equity', 0)) if kr_curve else 0.0
+                us_eq_raw = float(us_curve[-1].get('equity', 0)) if us_curve else 0.0
+                # US equity는 USD 단위 — 환율 1350 가정 (정밀 환산은 후속)
+                us_eq_krw = us_eq_raw * 1350.0
+                est = btc_eq + kr_eq + us_eq_krw
+                if est > 0:
+                    total_capital = est
+            except Exception as _ee:
+                log.debug("cross_market equity estimate failed", error=str(_ee)[:200])
+
+        if total_capital <= 0:
+            # 추정 실패 — debug 레벨로 (이전엔 warning, noise 큼)
+            log.debug(
+                "cross_market_skip_no_equity",
                 positions={
                     "btc": btc.position_value,
                     "kr": kr.position_value,

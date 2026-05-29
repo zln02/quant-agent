@@ -112,35 +112,24 @@ class TestV63RegressionGuard(unittest.TestCase):
     # ─────────────────────────────────────────────────────────────
     # TC-3: BTC analyze_with_ai 정의 주변에 DEPRECATED 주석 보존 확인
     # ─────────────────────────────────────────────────────────────
-    def test_btc_deprecation_comment_preserved(self) -> None:
-        """btc_trading_agent.py의 def analyze_with_ai 정의 앞뒤 10줄 내에
-        'DEPRECATED' 문자열이 있어야 한다.
+    def test_btc_analyze_with_ai_fully_removed(self) -> None:
+        """PR #27: btc_trading_agent.py 의 analyze_with_ai/_call_btc_haiku 완전 삭제 확인.
 
-        함수가 Phase 4 완료 전에 조용히 재활성화(주석 제거)되는 것을 방지.
+        Phase 4 페이퍼 검증 완료. 함수가 다시 추가되면 fail (재도입 방지).
+        대체: rule_based_btc_signal (v6.3).
         """
-        lines = BTC_AGENT.read_text(encoding="utf-8").splitlines()
-        definition_lines = [i for i, ln in enumerate(lines) if "def analyze_with_ai" in ln]
-
-        self.assertTrue(
-            len(definition_lines) >= 1,
-            f"btc_trading_agent.py에서 'def analyze_with_ai' 정의를 찾지 못함 — "
-            f"DEPRECATED 함수가 의도치 않게 삭제되었는지 확인. ({BTC_AGENT})",
+        source = BTC_AGENT.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "def analyze_with_ai",
+            source,
+            "btc_trading_agent.py 에 analyze_with_ai 가 재도입됨 — "
+            "v6.3 룰 기반 정책 위배 (rule_based_btc_signal 사용 필수).",
         )
-
-        deprecated_found = False
-        for def_lineno in definition_lines:
-            # 앞뒤 10줄 범위
-            start = max(0, def_lineno - 10)
-            end = min(len(lines), def_lineno + 11)
-            window = "\n".join(lines[start:end])
-            if "DEPRECATED" in window:
-                deprecated_found = True
-                break
-
-        self.assertTrue(
-            deprecated_found,
-            f"[v6.3 regression] btc_trading_agent.py analyze_with_ai 정의 앞뒤 10줄 내에 "
-            f"'DEPRECATED' 주석이 없음. Phase 4 완료 전 호출 금지 의도가 명시되어야 함.",
+        self.assertNotIn(
+            "def _call_btc_haiku",
+            source,
+            "btc_trading_agent.py 에 _call_btc_haiku 가 재도입됨 — "
+            "매매 결정 루프 LLM 의존 금지 (CLAUDE.md 정책).",
         )
 
     # ─────────────────────────────────────────────────────────────
