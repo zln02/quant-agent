@@ -20,12 +20,14 @@ ML + 리스크 전체 파이프라인 백테스터 v1.0
   "ML 필터 + 손절/트레일링/익절 + 하루 2건 제한" 조합만 시뮬레이션합니다.
 """
 
+import json
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+
 from common.env_loader import load_env
 
 load_env()
@@ -35,8 +37,9 @@ _STOCKS_DIR = str(Path(__file__).parent)
 if _STOCKS_DIR not in sys.path:
     sys.path.insert(0, _STOCKS_DIR)
 
-from supabase import create_client  # noqa: E402
 from ml_model import _load_model, extract_features  # noqa: E402
+
+from supabase import create_client  # noqa: E402
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_SECRET_KEY', '')

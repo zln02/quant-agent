@@ -95,15 +95,27 @@ def send_telegram(
     retries: int = 2,
     priority: Priority = Priority.URGENT,
 ) -> bool:
-    """메시지 전송.
+    """메시지 전송 — 자비스(jay-agent) 우선, 텔레그램 fallback.
 
-    priority=INFO  → 버퍼에 저장, 즉시 발송 안 함
-    priority=IMPORTANT/URGENT → 즉시 발송
+    priority=INFO     → 버퍼에 저장, 즉시 발송 안 함
+    priority=IMPORTANT/URGENT → 자비스 우선 시도. 자비스 발송 성공 시 텔레그램 skip.
+                              자비스 미설정/다운 시에만 텔레그램 fallback.
+
+    Env: JAY_INTERNAL_TOKEN 설정 → 자비스 활성. 미설정 → 텔레그램 단독.
     """
     if priority == Priority.INFO:
         append_info_buffer(msg)
         return True
 
+    # 자비스(jay-agent) 우선 시도 — 사용자 체감 알림 채널
+    try:
+        from common import jay_bridge as _jb
+        if _jb.post_event(msg, priority=priority.name, source="quant"):
+            return True
+    except Exception as exc:
+        log.debug("jay_bridge primary 송신 실패, 텔레그램 fallback: %s", exc)
+
+    # 텔레그램 fallback — 자비스 다운/미설정 시
     global _last_send_ts
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
