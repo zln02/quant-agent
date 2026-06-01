@@ -813,6 +813,19 @@ def execute_buy(symbol: str, score: float, indicators: dict, signal: Optional[di
         ratio = RISK["invest_ratio_B"]
     else:
         ratio = RISK["invest_ratio_C"]
+    # PR #28: SpaceX 프록시 ETF 는 NAV premium/유동성 한계 — 사이즈 50% 보수화
+    try:
+        from us_momentum_backtest import SPACEX_PROXY_META, is_spacex_proxy
+        if is_spacex_proxy(symbol):
+            _meta = SPACEX_PROXY_META.get(symbol, {})
+            if _meta.get("premium_warn"):
+                ratio = ratio * 0.5  # premium 큰 종목 (DXYZ) — half size
+                log(f"  {symbol}: SpaceX 프록시 premium_warn — 사이즈 50% ({_meta.get('note')})", "WARN")
+            else:
+                ratio = ratio * 0.75  # 일반 프록시 — 75%
+                log(f"  {symbol}: SpaceX 프록시 — 사이즈 75% ({_meta.get('note')})", "INFO")
+    except Exception as _spe:
+        log(f"  {symbol}: SpaceX 프록시 메타 로드 실패 (무시): {_spe}", "WARN")
     invest_usd = RISK["virtual_capital"] * ratio
 
     # v6: Kelly sizer always called (conservative defaults for < 50 trades)
