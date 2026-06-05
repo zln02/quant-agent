@@ -23,7 +23,7 @@
 ## Live Trading Performance
 
 <!-- LIVE-STATS:START -->
-> Last updated: `2026-06-04 05:58 UTC` via GitHub Actions
+> Last updated: `2026-06-05 05:19 UTC` via GitHub Actions
 
 | Market | Trades | Win Rate | Avg PnL |
 |--------|--------|----------|---------|
