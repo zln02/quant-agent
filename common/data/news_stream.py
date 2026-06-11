@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
@@ -145,18 +144,93 @@ def _fetch_coindesk_rss(limit: int = 10) -> List[dict]:
     return records
 
 
-def collect_news_once(currencies: str = "BTC", limit: int = 20) -> List[dict]:
+def _fetch_us_stock_news(ticker: str, limit: int = 20) -> List[dict]:
+    """US 주식/ETF 종목별 뉴스를 yfinance 로 수집해 표준 row 포맷으로 정규화.
+
+    CryptoPanic 은 암호화폐 전용이라 US 티커(SPCX/ARKX 등) 뉴스를 못 가져온다.
+    yfinance 의 ``Ticker(ticker).news`` 는 무키로 종목별 뉴스를 제공한다.
+
+    yfinance 1.2.0 news item 구조:
+        {"id": "<uuid>", "content": {"title", "pubDate",
+         "provider": {"displayName"}, "canonicalUrl": {"url"},
+         "clickThroughUrl": {"url"}}}
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        log.warning("yfinance not installed — US news skipped", ticker=ticker)
+        return []
+
+    try:
+        raw = yf.Ticker(ticker).news or []
+    except Exception as exc:
+        log.warning("yfinance news fetch failed", ticker=ticker, error=exc)
+        return []
+
+    sym = ticker.strip().upper()
+    records: List[dict] = []
+    for item in raw[:limit]:
+        content = item.get("content") or {}
+        headline = content.get("title") or item.get("title") or ""
+        if not headline:
+            continue
+        provider = content.get("provider") or {}
+        url = (content.get("canonicalUrl") or {}).get("url") or (
+            content.get("clickThroughUrl") or {}
+        ).get("url") or item.get("link", "")
+        ts = content.get("pubDate") or content.get("displayTime") or ""
+        records.append(
+            {
+                "id": str(item.get("id") or url or f"{ts}:{headline}"),
+                "headline": headline,
+                "source": provider.get("displayName") or "Yahoo Finance",
+                "timestamp": _parse_iso_timestamp(ts),
+                "symbols": [sym],
+                "sentiment_raw": 0.0,
+                "url": url,
+            }
+        )
+    return records
+
+
+# 암호화폐 심볼 화이트리스트 — 여기 없는 심볼은 US 주식/ETF 로 간주해
+# yfinance 경로를 탄다. 새 코인 추가 시 이 집합을 갱신할 것.
+_CRYPTO_SYMBOLS = frozenset(
+    {"BTC", "ETH", "XRP", "ADA", "SOL", "DOGE", "LTC", "MATIC", "DOT", "LINK", "UNI"}
+)
+
+
+def collect_news_once(
+    currencies: str = "BTC", limit: int = 20, asset_class: str = "auto"
+) -> List[dict]:
     """Collect normalized news records.
 
     Output schema:
     {
       headline, source, timestamp, symbols[], sentiment_raw, url, id
     }
+
+    asset_class:
+      "auto"   — 심볼을 화이트리스트로 판별 (crypto vs us stock). 기본값(하위호환).
+      "crypto" — CryptoPanic/CoinDesk 경로 강제.
+      "stock"  — yfinance US 종목 뉴스 경로 강제.
     """
     cache_key = f"news_stream:{currencies}:{limit}"
     cached = get_cached(cache_key)
     if cached is not None:
         return cached
+
+    first_symbol = currencies.upper().split(",")[0].strip()
+    if asset_class == "auto":
+        is_crypto = first_symbol in _CRYPTO_SYMBOLS
+    else:
+        is_crypto = asset_class == "crypto"
+
+    if not is_crypto:
+        # US 주식/ETF — yfinance 종목 뉴스. crypto RSS fallback 안 탐.
+        rows = _fetch_us_stock_news(ticker=first_symbol, limit=limit)
+        set_cached(cache_key, rows, ttl=300)
+        return rows
 
     # 429 rate limit 중이면 CryptoPanic 요청 건너뜀
     _rate_limit_key = f"cryptopanic:rate_limit:{currencies}"

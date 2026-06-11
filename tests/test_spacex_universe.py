@@ -19,8 +19,19 @@ def test_spacex_proxy_meta_keys_consistent():
     # META 의 모든 키는 US_UNIVERSE 에 있어야 함
     for sym in SPACEX_PROXY_META.keys():
         assert sym in US_UNIVERSE, f"META 의 {sym} 가 US_UNIVERSE 에 없음"
-    # 4개 종목 모두 메타 포함
-    assert set(SPACEX_PROXY_META.keys()) == {"DXYZ", "NASA", "ARKX", "XOVR"}
+    # 프록시 ETF 4종 + SPCX 본주(PR #33) 모두 메타 포함
+    assert set(SPACEX_PROXY_META.keys()) == {"DXYZ", "NASA", "ARKX", "XOVR", "SPCX"}
+
+
+def test_spcx_registered_for_ipo():
+    """PR #33: SPCX 본주가 유니버스 등록 + 고변동성 사이징."""
+    from us_momentum_backtest import (SPACEX_PROXY_META, US_UNIVERSE,
+                                      is_spacex_proxy)
+    assert "SPCX" in US_UNIVERSE
+    assert is_spacex_proxy("SPCX") is True
+    # IPO 신규상장 고변동성 → premium_warn=True (사이즈 50%)
+    assert SPACEX_PROXY_META["SPCX"]["premium_warn"] is True
+    assert SPACEX_PROXY_META["SPCX"]["spacex_pct"] == 100.0
 
 
 def test_is_spacex_proxy_recognises_all_four():
