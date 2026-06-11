@@ -46,20 +46,23 @@ US_UNIVERSE = [
     "CAT", "BA", "GE", "HON", "XOM", "CVX",
     # ETFs (섹터/지수 대표)
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLV",
-    # Space / SpaceX exposure (PR #28) — SpaceX IPO (2026-06 예상, ticker SPCX) 전후 대응
+    # Space / SpaceX exposure (PR #28) — SpaceX IPO (2026-06-12 Nasdaq 상장 확정, ticker SPCX)
     # DXYZ: Destiny Tech100 (SpaceX 비중 ~16%, premium 큼 주의)
     # NASA: Tema Space Innovators (SPV 통한 SpaceX 직접 노출)
     # ARKX: ARK Space & Defense (Rocket Lab/AMD/AMZN 등 혼합)
     # XOVR: ERShares Crossover ETF (SpaceX 등 사모지분 포함)
-    "DXYZ", "NASA", "ARKX", "XOVR",
+    # SPCX: SpaceX 본주 (PR #33) — IPO 첫날 데이터 0이라 30봉 쌓일 때까지 자연 탈락,
+    #       +30일 후 기존 룰/ML 파이프라인이 자동 편입. 신규상장 고변동성 → 사이즈 50%.
+    "DXYZ", "NASA", "ARKX", "XOVR", "SPCX",
 ]
 
-# SpaceX 노출 ETF — premium/유동성 메타 (사이즈 가이드)
+# SpaceX 노출 ETF/본주 — premium/유동성 메타 (사이즈 가이드)
 SPACEX_PROXY_META = {
-    "DXYZ":  {"spacex_pct": 16.2, "premium_warn": True,  "note": "NAV 대비 큰 premium"},
-    "NASA":  {"spacex_pct": None, "premium_warn": False, "note": "SPV via Forge — 가장 깨끗한 노출"},
-    "ARKX":  {"spacex_pct": None, "premium_warn": False, "note": "Space + Defense 광범위"},
-    "XOVR":  {"spacex_pct": None, "premium_warn": False, "note": "사모지분 노출"},
+    "DXYZ":  {"spacex_pct": 16.2,  "premium_warn": True,  "note": "NAV 대비 큰 premium"},
+    "NASA":  {"spacex_pct": None,  "premium_warn": False, "note": "SPV via Forge — 가장 깨끗한 노출"},
+    "ARKX":  {"spacex_pct": None,  "premium_warn": False, "note": "Space + Defense 광범위"},
+    "XOVR":  {"spacex_pct": None,  "premium_warn": False, "note": "사모지분 노출"},
+    "SPCX":  {"spacex_pct": 100.0, "premium_warn": True,  "note": "SpaceX 본주 — IPO 신규상장 고변동성, 사이즈 50%"},
 }
 
 
