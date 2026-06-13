@@ -165,6 +165,42 @@ _btc_buy_blocked = False
 # audit fix: CrossMarket 리스크 — 모듈 레벨 싱글턴 (매 사이클 재사용)
 _cmr_instance = None
 
+
+def _fetch_balances_safe() -> "dict | None":
+    """Upbit 전체 잔고를 1회 조회해 {통화: 수량} dict로 정규화한다.
+
+    IP 인증 실패(no_authorization_ip)·API 장애·레이트리밋으로 에러 응답(dict)·
+    None·예외가 오면 0으로 오인하지 않고 ``None``을 반환한다. 호출부는 None일 때
+    잔고 0으로 진행하지 말고 사이클을 명시적으로 스킵해야 한다(매수 미체결뿐 아니라
+    손절·강제청산이 조용히 누락되는 사고 방지).
+
+    부가 효과: 사이클당 get_balance 개별 호출(2~4회)을 get_balances 1회로 축소.
+    """
+    if upbit is None:
+        return None
+    try:
+        raw = upbit.get_balances()
+    except Exception as e:
+        log.error(f"Upbit get_balances 예외 — 잔고 조회 실패: {e}")
+        send_telegram(f"🚨 BTC 잔고 조회 실패(API 예외): {e}")
+        return None
+    if not isinstance(raw, list):
+        # Upbit는 인증/IP 오류 시 list가 아니라 에러 dict를 반환
+        detail = (raw.get("name") or raw.get("error") or raw) if isinstance(raw, dict) else raw
+        log.error(f"Upbit 잔고 조회 실패(비정상 응답): {detail}")
+        send_telegram(f"🚨 BTC 잔고 조회 실패 — IP 인증/API 오류 가능: {detail}")
+        return None
+    balances: "dict[str, float]" = {}
+    for item in raw:
+        cur = item.get("currency")
+        if not cur:
+            continue
+        try:
+            balances[cur] = float(item.get("balance") or 0)
+        except (TypeError, ValueError):
+            balances[cur] = 0.0
+    return balances
+
 # ── 리스크 설정 (v6 — Top-tier Quant) ─────────────
 RISK = {
     "split_ratios": [0.15, 0.25, 0.40],     # 스코어 높을수록 큰 비중
@@ -1148,8 +1184,12 @@ def execute_trade(
     if signal["confidence"] < RISK["min_confidence"]:
         return {"result": "SKIP"}
 
-    btc_balance = upbit.get_balance("BTC") or 0
-    krw_balance = upbit.get_balance("KRW") or 0
+    balances = _fetch_balances_safe()
+    if balances is None:
+        log.error("Upbit 잔고 조회 실패(IP 인증/API 오류) — 매수 사이클 스킵")
+        return {"result": "BALANCE_UNAVAILABLE"}
+    btc_balance = balances.get("BTC", 0.0)
+    krw_balance = balances.get("KRW", 0.0)
     # audit fix: 포지션 조회 실패 시 사이클 스킵
     try:
         pos = get_open_position()
@@ -1560,16 +1600,19 @@ def run_trading_cycle() -> dict:
     # P1-1: DrawdownGuard가 설정한 _btc_buy_blocked 값을 사이클 간 유지해야 함
     # equity_curve가 있는 경우에만 DrawdownGuard가 값을 재설정함
 
+    # 사이클당 잔고 1회 조회 — 실패 시 None (0으로 오인 금지). 스냅샷/청산에서 재사용.
+    cycle_balances = _fetch_balances_safe()
     try:
-        krw_balance = upbit.get_balance("KRW") or 0
-        btc_balance = upbit.get_balance("BTC") or 0
-        spot_price = float(pyupbit.get_current_price("KRW-BTC") or 0)
-        account_equity = float(krw_balance) + float(btc_balance) * spot_price
-        if account_equity > 0:
-            append_equity_snapshot('btc', account_equity, {"source": "upbit_balances", "price": spot_price})
-            tw = get_effective_market_weight('BTC')
-            if tw is not None:
-                log.info(f"리밸런싱 목표 비중(BTC): {tw:.1%}")
+        if cycle_balances is not None:
+            krw_balance = cycle_balances.get("KRW", 0.0)
+            btc_balance = cycle_balances.get("BTC", 0.0)
+            spot_price = float(pyupbit.get_current_price("KRW-BTC") or 0)
+            account_equity = float(krw_balance) + float(btc_balance) * spot_price
+            if account_equity > 0:
+                append_equity_snapshot('btc', account_equity, {"source": "upbit_balances", "price": spot_price})
+                tw = get_effective_market_weight('BTC')
+                if tw is not None:
+                    log.info(f"리밸런싱 목표 비중(BTC): {tw:.1%}")
     except Exception as e:
         log.warning(f"BTC 자산 스냅샷 저장 실패: {e}")
 
@@ -1594,7 +1637,11 @@ def run_trading_cycle() -> dict:
             except Exception:
                 log.error("WEEKLY_DELEVERAGE 포지션 조회 실패 — 사이클 스킵")
                 return {"result": "DB_ERROR"}
-            btc_balance = upbit.get_balance("BTC") or 0
+            if cycle_balances is None:
+                log.error("Upbit 잔고 조회 실패 — WEEKLY_DELEVERAGE 청산 불가, 사이클 중단")
+                send_telegram("🚨 BTC 잔고 조회 실패로 DELEVERAGE 청산 불가 — IP 인증/API 확인 필요")
+                return {"result": "BALANCE_UNAVAILABLE"}
+            btc_balance = cycle_balances.get("BTC", 0.0)
             price = _latest_market_price()
             if price <= 0:
                 log.warning("시장 데이터 없음 — WEEKLY_DELEVERAGE 가격 조회 실패, 즉시 매도 스킵")
@@ -1619,7 +1666,11 @@ def run_trading_cycle() -> dict:
             except Exception:
                 log.error("FULL_STOP 포지션 조회 실패 — 사이클 스킵")
                 return {"result": "DB_ERROR"}
-            btc_balance = upbit.get_balance("BTC") or 0
+            if cycle_balances is None:
+                log.error("Upbit 잔고 조회 실패 — FULL_STOP 강제청산 불가, 사이클 중단")
+                send_telegram("🚨 BTC 잔고 조회 실패로 FULL_STOP 강제청산 불가 — IP 인증/API 확인 필요")
+                return {"result": "BALANCE_UNAVAILABLE"}
+            btc_balance = cycle_balances.get("BTC", 0.0)
             price = _latest_market_price()
             if price <= 0:
                 log.warning("시장 데이터 없음 — FULL_STOP 가격 조회 실패, 강제청산 스킵")
