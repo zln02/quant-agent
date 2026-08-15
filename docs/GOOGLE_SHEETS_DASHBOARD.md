@@ -40,7 +40,7 @@ workspace/
 | 시트 | ID | 목적 |
 |------|----|-----|
 | **메인 거래기록** | `1HXBiwg38i2LrgOgC3mjokH0sTk7qgq7Q8o4jdWOe58s` | 모든 거래 상세 기록 |
-| **포트폴리오 요약** | `12nutQo_rA6BVo9xjbIrFhS6PLaz4uC_m82pdIMUIuZA` | 실시간 자산 현황 |
+| **포트폴리오 요약** | `<GOOGLE_SHEET_ID>` | 실시간 자산 현황 |
 | **통계 분석** | `16ai_PTJ6XfIpPaio-AnaNY7aQaDPrdqtrvpA91nUH14` | 거래 통계 및 성과 |
 | **위험 관리** | `1MijDcgoFp6hY1bhl9fhHKTBFpK4yBXZL9lzNZ_MaK-w` | 위험 지표 및 관리 |
 
@@ -63,7 +63,7 @@ workspace/
 export GOOGLE_SHEET_ID="1HXBiwg38i2LrgOgC3mjokH0sTk7qgq7Q8o4jdWOe58s"
 export GOOGLE_SHEET_TAB="시트1"
 export USE_GOG="true"
-export GOG_KEYRING_PASSWORD="openclaw-gog-secret"
+export GOG_KEYRING_PASSWORD="<GOG_KEYRING_PASSWORD>"
 
 # 알림 설정
 export TELEGRAM_BOT_TOKEN="your_bot_token"
@@ -81,7 +81,7 @@ cp /var/lib/docker/rootfs/overlayfs/*/usr/local/bin/gog ./gog-docker
 chmod +x ./gog-docker
 
 # OAuth 인증
-export GOG_KEYRING_PASSWORD="openclaw-gog-secret"
+export GOG_KEYRING_PASSWORD="<GOG_KEYRING_PASSWORD>"
 ./gog-docker auth add your-email@gmail.com --services sheets
 ```
 

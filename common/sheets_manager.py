@@ -28,7 +28,7 @@ log = get_logger("sheets_manager")
 # 시트 ID 설정 — 환경변수 우선, fallback은 .env에 설정 권장
 # .env 예시: GOOGLE_PORTFOLIO_SHEET_ID=12nutQo_...
 MAIN_SHEET_ID       = os.getenv("GOOGLE_SHEET_ID", "")
-PORTFOLIO_SHEET_ID  = os.getenv("GOOGLE_PORTFOLIO_SHEET_ID",  "12nutQo_rA6BVo9xjbIrFhS6PLaz4uC_m82pdIMUIuZA")
+PORTFOLIO_SHEET_ID  = os.getenv("GOOGLE_PORTFOLIO_SHEET_ID",  "")
 STATISTICS_SHEET_ID = os.getenv("GOOGLE_STATISTICS_SHEET_ID", "16ai_PTJ6XfIpPaio-AnaNY7aQaDPrdqtrvpA91nUH14")
 RISK_SHEET_ID       = os.getenv("GOOGLE_RISK_SHEET_ID",       "1MijDcgoFp6hY1bhl9fhHKTBFpK4yBXZL9lzNZ_MaK-w")
 
@@ -79,7 +79,7 @@ class AdvancedSheetsManager:
                         log.error(
                             "Google Sheets OAuth token 만료 (invalid_grant) — "
                             "gog 재인증 필요: GOG_KEYRING_PASSWORD 환경변수 설정 후 "
-                            "`gog-docker auth login --account jei53507@gmail.com` 실행. "
+                            "`gog-docker auth login --account <GOG_ACCOUNT>` 실행. "
                             "30분간 Sheets 업데이트 비활성화."
                         )
                         try:
@@ -87,7 +87,7 @@ class AdvancedSheetsManager:
                             send_telegram(
                                 "⚠️ <b>Google Sheets OAuth 만료</b>\n"
                                 "invalid_grant — 재인증 필요\n"
-                                "<code>gog-docker auth login --account jei53507@gmail.com</code>"
+                                "<code>gog-docker auth login --account <GOG_ACCOUNT></code>"
                             )
                         except Exception:
                             pass

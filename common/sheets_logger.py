@@ -9,7 +9,7 @@
 환경변수:
   - GOOGLE_SHEET_ID: 시트 ID (필수)
   - GOOGLE_SHEET_TAB: 탭명 (기본 "거래기록")
-  - GOG_KEYRING_PASSWORD: gog 사용 시 (openclaw-gog-secret)
+  - GOG_KEYRING_PASSWORD: gog 사용 시 (값은 환경변수로만 주입, 저장소에 기록하지 않음)
 """
 from __future__ import annotations
 

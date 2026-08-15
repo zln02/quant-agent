@@ -3,12 +3,12 @@
   <p align="center">
     AI-Powered Multi-Market Automated Trading System
     <br />
-    <strong>BTC · KR Stocks · US Stocks</strong> — 3개 시장 동시 자동매매
+    <strong>BTC · KR Stocks · US Stocks</strong> — 3개 시장 동시 자동매매 (2026-02 ~ 2026-06 운영, 현재 종료)
   </p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/zln02/quant-agent/actions/workflows/ci.yml"><img src="https://github.com/zln02/quant-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/status-archived-lightgrey" alt="Archived">
   <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/version-v6.2-orange" alt="Version">
   <img src="https://img.shields.io/badge/markets-3_(BTC%2BKR%2BUS)-blueviolet" alt="Markets">
@@ -16,23 +16,16 @@
   <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="License">
 </p>
 
+> **Status:** Archived (읽기 전용)
+> **운영 기간:** 2026-02-21 ~ 2026-06-13
+> **종료 사유:** 계획 종료 — 포트폴리오 정리에 따른 운영 중단
+> **회고:** [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md)
+
+이 저장소는 더 이상 운영되지 않는다. 아래 문서는 운영 당시의 아키텍처와 구현을
+기록으로 남긴 것이며, 현재 가동 중인 서비스나 실시간 지표는 없다.
+재현은 [Quick Start](#quick-start)의 `docker compose up -d` 로 가능하다.
+
 > **Warning**: 이 프로젝트는 교육 및 연구 목적입니다. 실제 자금 투자 시 손실이 발생할 수 있으며, 투자 결정에 대한 책임은 본인에게 있습니다.
-
----
-
-## Live Trading Performance
-
-<!-- LIVE-STATS:START -->
-> Last updated: `2026-08-15 02:13 UTC` via GitHub Actions
-
-| Market | Trades | Win Rate | Avg PnL |
-|--------|--------|----------|---------|
-| BTC | 0 | — | — |
-| KR | 0 | — | — |
-| US | 0 | — | — |
-<!-- LIVE-STATS:END -->
-
-<sub>Stats auto-updated daily from Supabase via <a href=".github/workflows/update-readme.yml">GitHub Actions</a></sub>
 
 ---
 
@@ -233,7 +226,9 @@ cd dashboard && npm install && npm run dev
 
 ## Infrastructure
 
-### GCP e2-small (2 vCPU, 8GB RAM)
+운영 당시(2026-02-21 ~ 2026-06-13) 구성이며, 현재는 모두 종료된 상태다.
+
+### GCP e2-small (2 vCPU, 8GB RAM) — 운영 종료
 
 | Service | Port | Bind | Description |
 |---------|------|------|-------------|

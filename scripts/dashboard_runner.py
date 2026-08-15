@@ -112,7 +112,7 @@ class IntegratedDashboard:
         """대시보드 링크 정보 반환"""
         return {
             "main_sheet": "https://docs.google.com/spreadsheets/d/1HXBiwg38i2LrgOgC3mjokH0sTk7qgq7Q8o4jdWOe58s/edit",
-            "portfolio": "https://docs.google.com/spreadsheets/d/12nutQo_rA6BVo9xjbIrFhS6PLaz4uC_m82pdIMUIuZA/edit",
+            "portfolio": os.getenv("GOOGLE_PORTFOLIO_SHEET_URL", ""),
             "statistics": "https://docs.google.com/spreadsheets/d/16ai_PTJ6XfIpPaio-AnaNY7aQaDPrdqtrvpA91nUH14/edit",
             "risk_management": "https://docs.google.com/spreadsheets/d/1MijDcgoFp6hY1bhl9fhHKTBFpK4yBXZL9lzNZ_MaK-w/edit"
         }

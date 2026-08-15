@@ -144,10 +144,14 @@ def check_sheets_oauth() -> tuple[bool, str]:
     password = os.environ.get("GOG_KEYRING_PASSWORD", "")
     if not password:
         return True, "GOG_KEYRING_PASSWORD 없음(skip)"
+    account = os.environ.get("GOG_ACCOUNT", "")
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
+    if not account or not sheet_id:
+        return True, "GOG_ACCOUNT / GOOGLE_SHEET_ID 없음(skip)"
     rc, out = _run(
         f'GOG_KEYRING_PASSWORD="{password}" {gog} sheets read '
-        '--account jei53507@gmail.com '
-        '"12nutQo_rA6BVo9xjbIrFhS6PLaz4uC_m82pdIMUIuZA" "시트1!A1:A1" 2>&1',
+        f'--account "{account}" '
+        f'"{sheet_id}" "시트1!A1:A1" 2>&1',
         timeout=15,
     )
     if "invalid_grant" in out or "Bad Request" in out:
@@ -286,9 +290,9 @@ def run_self_healing(quiet: bool = False) -> dict[str, Any]:
                 "재인증이 필요합니다.\n\n"
                 "<b>재인증 방법:</b>\n"
                 "터미널에서 실행:\n"
-                "<code>GOG_KEYRING_PASSWORD=openclaw-gog-secret "
+                '<code>GOG_KEYRING_PASSWORD="$GOG_KEYRING_PASSWORD" '
                 "~/.openclaw/workspace/gog-docker auth login "
-                "--account jei53507@gmail.com</code>\n\n"
+                '--account "$GOG_ACCOUNT"</code>\n\n'
                 "브라우저에서 Google 로그인 완료 후 자동으로 복구됩니다."
             )
 
